@@ -99,7 +99,7 @@ The runtime follows Claude-style memory layering:
 
 - Global user-wide config: `~/.config/opencode/honcho.json`
 - Project overrides: `.opencode/honcho.json`
-- Fallback environment: `HONCHO_API_KEY`, `HONCHO_BASE_URL`, `HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`
+- Fallback environment: `HONCHO_API_KEY`, `HONCHO_URL`, `HONCHO_BASE_URL`, `HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`
 
 Effective precedence is:
 
@@ -192,6 +192,8 @@ It should include:
 - `dist/`
 - `vendor/`
 - `README.md`
+- `CHANGELOG.md`
+- `LICENSE`
 - `package.json`
 - `tsconfig.json`
 
