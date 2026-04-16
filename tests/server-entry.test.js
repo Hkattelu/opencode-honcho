@@ -17,14 +17,6 @@ test("server entry default export matches OpenCode plugin expectations", () => {
   assert.equal(typeof serverModule.server, "function")
 })
 
-test("Honcho SDK constructor resolver accepts namespace and CJS-default shapes", () => {
-  class FakeHoncho {}
-
-  assert.equal(__testing.resolveHonchoCtor({ Honcho: FakeHoncho }), FakeHoncho)
-  assert.equal(__testing.resolveHonchoCtor({ default: { Honcho: FakeHoncho } }), FakeHoncho)
-  assert.equal(__testing.resolveHonchoCtor({ default: { default: { Honcho: FakeHoncho } } }), FakeHoncho)
-})
-
-test("Honcho SDK loader uses the explicit vendored dist entry", () => {
-  assert.equal(__testing.honchoSdkImportPath, "../vendor/honcho-sdk/dist/index.js")
+test("Honcho SDK import path uses @honcho-ai/sdk package", () => {
+  assert.equal(__testing.honchoSdkImportPath, "@honcho-ai/sdk")
 })
