@@ -1,16 +1,76 @@
 import { existsSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { createRequire } from "node:module"
 import path from "node:path"
-import * as HonchoSDK from "../vendor/honcho-sdk/dist/index.js"
 import { tool, type Plugin, type PluginInput } from "@opencode-ai/plugin"
+import { installGlobalConfig, scaffoldTemplates } from "./scaffold.js"
 
-const { Honcho } = HonchoSDK
+const HONCHO_SDK_IMPORT_PATH = "../vendor/honcho-sdk/dist/index.js"
+const requireFromHere = createRequire(import.meta.url)
 
-type HonchoClient = InstanceType<typeof HonchoSDK.Honcho>
+type HonchoSdkModule = typeof import("../vendor/honcho-sdk/dist/index.js")
+type HonchoSdkLoaderDeps = {
+  requireImpl?: (specifier: string) => unknown
+  importImpl?: (specifier: string) => Promise<unknown>
+}
+
+const describeSdkShape = (sdk: unknown) => {
+  if (!sdk || typeof sdk !== "object") {
+    return typeof sdk
+  }
+
+  const keys = Object.keys(sdk as Record<string, unknown>)
+  return keys.length > 0 ? keys.join(", ") : "<no enumerable keys>"
+}
+
+const resolveHonchoCtor = (sdk: unknown): HonchoSdkModule["Honcho"] => {
+  if (!sdk || typeof sdk !== "object") {
+    throw new Error(
+      `Honcho SDK constructor is unavailable. import path=${HONCHO_SDK_IMPORT_PATH}; module keys=${describeSdkShape(sdk)}`,
+    )
+  }
+
+  const direct = (sdk as { Honcho?: unknown }).Honcho
+  if (typeof direct === "function") {
+    return direct as HonchoSdkModule["Honcho"]
+  }
+
+  const fallback = (sdk as { default?: unknown }).default
+  if (fallback) {
+    return resolveHonchoCtor(fallback)
+  }
+
+  throw new Error(
+    `Honcho SDK constructor is unavailable. import path=${HONCHO_SDK_IMPORT_PATH}; module keys=${describeSdkShape(sdk)}`,
+  )
+}
+
+let honchoCtorPromise: Promise<HonchoSdkModule["Honcho"]> | null = null
+
+const loadHonchoModule = async (
+  deps: HonchoSdkLoaderDeps = {},
+): Promise<unknown> => {
+  const requireImpl = deps.requireImpl ?? ((specifier: string) => requireFromHere(specifier))
+  const importImpl = deps.importImpl ?? ((specifier: string) => import(specifier))
+
+  try {
+    return requireImpl(HONCHO_SDK_IMPORT_PATH)
+  } catch {
+    return importImpl(HONCHO_SDK_IMPORT_PATH)
+  }
+}
+
+const loadHonchoCtor = () => {
+  honchoCtorPromise ??= loadHonchoModule().then((sdk) => resolveHonchoCtor(sdk))
+  return honchoCtorPromise
+}
+
+type HonchoClient = InstanceType<HonchoSdkModule["Honcho"]>
 
 type RecallMode = "hybrid" | "context" | "tools"
 type ObservationMode = "directional" | "unified"
-type SessionStrategy = "per-repo" | "per-directory" | "per-session" | "global"
+type SessionStrategy = "per-repo" | "per-directory" | "per-session" | "global" | "git-branch" | "chat-instance"
+type PeerModel = "classic" | "hierarchical"
 type DialecticReasoningLevel = "minimal" | "low" | "medium" | "high" | "max"
 type WriteFrequency = "async" | "turn" | "session" | number
 type ContextRefreshSettings = {
@@ -41,6 +101,7 @@ type HonchoSettings = {
   linkedHosts: string[]
   recallMode: RecallMode
   observation: ObservationMode
+  peerModel: PeerModel
   writeFrequency: WriteFrequency
   sessionStrategy: SessionStrategy
   dialecticReasoningLevel: DialecticReasoningLevel
@@ -61,6 +122,7 @@ type RuntimeHandle = {
   sessionKey: string
   userPeerId: string
   rootAgentPeerId: string
+  activeAgentPeerId: string
   childAgentPeerId: string | null
   parentAgentObserverPeerId: string | null
 }
@@ -78,15 +140,45 @@ type SessionState = {
   lastInjectedContext: string | null
   recentConclusions: string[]
   conclusionFingerprints: Set<string>
+  capturedAssistantMessageIds: Set<string>
+  assistantMessageParts: Map<string, { sessionID: string; parts: Map<string, string> }>
   promptCount: number
   lastPromptRefreshAt: number | null
   lastTopicKey: string | null
+}
+
+type PeerDescription = {
+  id: string
+  observeMe: boolean
+  observeOthers: boolean
+  sessionScoped?: boolean
+  modelsOnly?: string[]
+}
+
+type UserFacingPeerDescription = {
+  id: string
+  observe_me: boolean
+  observe_others: boolean
+  session_scoped?: boolean
+  models_only?: string[]
+}
+
+type PeerTopology = {
+  sessionPeerConfigs: Record<string, { observeMe: boolean; observeOthers: boolean }>
+  describedPeers: {
+    userPeer: PeerDescription
+    rootAgentPeer: PeerDescription
+    childAgentPeer: PeerDescription | null
+    parentAgentObserverPeer: PeerDescription | null
+  }
 }
 
 const SETTINGS_FILE_NAME = "honcho.json"
 const SETTINGS_DIR_NAME = ".opencode"
 const GLOBAL_SETTINGS_DIR_NAME = "opencode"
 const GLOBAL_SETTINGS_FILE_PATH = "honcho.json"
+const PERSISTED_API_KEY_FIELD = "honchoApiKey"
+const LEGACY_API_KEY_FIELD = "apiKey"
 const RUNTIME_SERVICE = "opencode-honcho"
 const MAX_RECENT_CONCLUSIONS = 8
 
@@ -101,8 +193,9 @@ const DEFAULT_SETTINGS: HonchoSettings = {
   linkedHosts: [],
   recallMode: "hybrid",
   observation: "directional",
+  peerModel: "classic",
   writeFrequency: "async",
-  sessionStrategy: "per-repo",
+  sessionStrategy: "per-directory",
   dialecticReasoningLevel: "low",
   dialecticDynamic: true,
   dialecticMaxChars: 600,
@@ -131,7 +224,8 @@ const NUMBER_KEYS = new Set<keyof HonchoSettings>([
 const ENUM_KEYS: Record<string, ReadonlySet<string>> = {
   recallMode: new Set(["hybrid", "context", "tools"]),
   observation: new Set(["directional", "unified"]),
-  sessionStrategy: new Set(["per-repo", "per-directory", "per-session", "global"]),
+  peerModel: new Set(["classic", "hierarchical"]),
+  sessionStrategy: new Set(["per-repo", "per-directory", "per-session", "global", "git-branch", "chat-instance"]),
   dialecticReasoningLevel: new Set(["minimal", "low", "medium", "high", "max"]),
 }
 
@@ -148,6 +242,7 @@ const TOP_LEVEL_SETTING_FIELDS = new Set<keyof HonchoSettings>([
   "linkedHosts",
   "recallMode",
   "observation",
+  "peerModel",
   "writeFrequency",
   "sessionStrategy",
   "dialecticReasoningLevel",
@@ -159,6 +254,7 @@ const TOP_LEVEL_SETTING_FIELDS = new Set<keyof HonchoSettings>([
 ])
 
 const SETTING_FIELD_PATHS = new Set([
+  PERSISTED_API_KEY_FIELD,
   "enabled",
   "apiKey",
   "baseUrl",
@@ -168,6 +264,7 @@ const SETTING_FIELD_PATHS = new Set([
   "globalOverride",
   "recallMode",
   "observation",
+  "peerModel",
   "writeFrequency",
   "sessionStrategy",
   "dialecticReasoningLevel",
@@ -206,19 +303,132 @@ const expandEnv = (value: string) =>
 const clampText = (value: string, maxChars: number) =>
   value.length > maxChars ? `${value.slice(0, Math.max(0, maxChars - 3))}...` : value
 
+const trimHyphenEdges = (value: string) => {
+  let start = 0
+  let end = value.length
+  while (start < end && value[start] === "-") {
+    start += 1
+  }
+  while (end > start && value[end - 1] === "-") {
+    end -= 1
+  }
+  return value.slice(start, end)
+}
+
 const normalizeId = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9:_-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "default"
+  trimHyphenEdges(value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")) || "default"
+
+const isLocalBaseUrl = (value: string) => {
+  if (!value.trim()) return false
+  try {
+    const url = new URL(value)
+    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+const hasConfiguredAuth = (settings: HonchoSettings) => Boolean(settings.apiKey) || isLocalBaseUrl(settings.baseUrl)
 
 const readTextPart = (part: unknown) =>
   isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : null
+
+const readVisibleTextPart = (part: unknown) => {
+  if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") {
+    return null
+  }
+  if (part.ignored === true) {
+    return null
+  }
+  const text = part.text.trim()
+  return text ? text : null
+}
 
 const extractText = (parts: unknown) =>
   Array.isArray(parts)
     ? parts.map(readTextPart).filter((value): value is string => Boolean(value)).join("\n").trim()
     : ""
+
+const timestampToIso = (value: unknown) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined
+  }
+
+  try {
+    return new Date(value).toISOString()
+  } catch {
+    return undefined
+  }
+}
+
+const upsertAssistantMessagePart = (
+  state: Map<string, { sessionID: string; parts: Map<string, string> }>,
+  payload: unknown,
+) => {
+  if (!isRecord(payload) || !isRecord(payload.event) || payload.event.type !== "message.part.updated") {
+    return
+  }
+
+  const properties = isRecord(payload.event.properties) ? payload.event.properties : null
+  const part = properties && isRecord(properties.part) ? properties.part : null
+  if (!part || part.type !== "text") {
+    return
+  }
+
+  const messageID = typeof part.messageID === "string" ? part.messageID : ""
+  const sessionID = typeof part.sessionID === "string" ? part.sessionID : ""
+  const partID = typeof part.id === "string" ? part.id : ""
+  if (!messageID || !sessionID || !partID) {
+    return
+  }
+
+  const visibleText = readVisibleTextPart(part)
+  const existing = state.get(messageID) ?? { sessionID, parts: new Map<string, string>() }
+  existing.sessionID = sessionID
+  if (visibleText) {
+    existing.parts.set(partID, visibleText)
+  } else {
+    existing.parts.delete(partID)
+  }
+
+  if (existing.parts.size > 0) {
+    state.set(messageID, existing)
+  } else {
+    state.delete(messageID)
+  }
+}
+
+const extractCompletedAssistantMessage = (
+  payload: unknown,
+  state: Map<string, { sessionID: string; parts: Map<string, string> }>,
+) => {
+  if (!isRecord(payload) || !isRecord(payload.event) || payload.event.type !== "message.updated") {
+    return null
+  }
+
+  const properties = isRecord(payload.event.properties) ? payload.event.properties : null
+  const info = properties && isRecord(properties.info) ? properties.info : null
+  if (!info || info.role !== "assistant" || info.summary === true) {
+    return null
+  }
+
+  const messageId = typeof info.id === "string" ? info.id : ""
+  const sessionID = typeof info.sessionID === "string" ? info.sessionID : ""
+  const timing = isRecord(info.time) ? info.time : null
+  const createdAt = timestampToIso(timing?.completed ?? timing?.created)
+  const entry = messageId ? state.get(messageId) : null
+  const text = entry ? Array.from(entry.parts.values()).join("\n").trim() : ""
+  if (!messageId || !sessionID || !createdAt || !text || typeof timing?.completed !== "number") {
+    return null
+  }
+
+  return {
+    messageId,
+    sessionID,
+    text,
+    createdAt,
+  }
+}
 
 const fingerprint = (value: string) => normalizeId(value.trim().slice(0, 160))
 
@@ -281,6 +491,25 @@ const parseSettingValue = (fieldPath: string, raw: string): unknown => {
   return raw
 }
 
+const normalizedRawSettings = (raw: Record<string, unknown>) => {
+  const normalized: Record<string, unknown> = { ...raw }
+  const persistedApiKey =
+    typeof raw[PERSISTED_API_KEY_FIELD] === "string"
+      ? expandEnv(raw[PERSISTED_API_KEY_FIELD] as string)
+      : ""
+  const legacyApiKey =
+    typeof raw[LEGACY_API_KEY_FIELD] === "string"
+      ? expandEnv(raw[LEGACY_API_KEY_FIELD] as string)
+      : ""
+  const effectiveApiKey = persistedApiKey || legacyApiKey
+
+  if (effectiveApiKey) {
+    normalized[LEGACY_API_KEY_FIELD] = effectiveApiKey
+  }
+
+  return normalized
+}
+
 const applyRawLayer = (target: HonchoSettings, raw: Record<string, unknown>) => {
   for (const [key, value] of Object.entries(raw) as Array<[keyof HonchoSettings, unknown]>) {
     if (key === "contextRefresh") {
@@ -291,7 +520,7 @@ const applyRawLayer = (target: HonchoSettings, raw: Record<string, unknown>) => 
         if (refreshValue === undefined || refreshValue === null) {
           continue
         }
-        target.contextRefresh[refreshKey] = refreshValue
+        ;(target.contextRefresh as Record<string, unknown>)[refreshKey] = refreshValue
       }
       continue
     }
@@ -329,7 +558,7 @@ const hostScopedSettings = (value: unknown): HostScopedSettings | null => {
 }
 
 const normalizeScopedSettings = (raw: Record<string, unknown>, hostId = "opencode") => {
-  const normalized: Record<string, unknown> = { ...raw }
+  const normalized: Record<string, unknown> = normalizedRawSettings(raw)
   const globalOverride = raw.globalOverride === true
   const topLevelWorkspace = typeof raw.workspace === "string" ? raw.workspace : ""
   const hostBlock = isRecord(raw.hosts) ? hostScopedSettings(raw.hosts[hostId]) : null
@@ -358,6 +587,20 @@ const mergeSettings = (...rawLayers: Array<Record<string, unknown>>): HonchoSett
     applyRawLayer(merged, raw)
   }
   return merged
+}
+
+const persistedSettings = (settings: Record<string, unknown>) => {
+  const merged = mergeSettings(normalizedRawSettings(settings))
+  const persisted: Record<string, unknown> = { ...(merged as Record<string, unknown>) }
+
+  if (typeof merged.apiKey === "string" && merged.apiKey.trim()) {
+    persisted[PERSISTED_API_KEY_FIELD] = merged.apiKey
+  } else {
+    delete persisted[PERSISTED_API_KEY_FIELD]
+  }
+
+  delete persisted[LEGACY_API_KEY_FIELD]
+  return persisted
 }
 
 const setSettingValue = (target: Record<string, unknown>, fieldPath: string, value: unknown) => {
@@ -454,10 +697,11 @@ const shouldRefreshPromptContext = (
 }
 
 const parseSettingField = (field: string) => {
-  if (!SETTING_FIELD_PATHS.has(field)) {
+  const normalizedField = field === PERSISTED_API_KEY_FIELD ? LEGACY_API_KEY_FIELD : field
+  if (!SETTING_FIELD_PATHS.has(field) && !SETTING_FIELD_PATHS.has(normalizedField)) {
     throw new Error(`Unknown setting '${field}'. Allowed fields: ${listAllowedSettingPaths().join(", ")}`)
   }
-  return field
+  return normalizedField
 }
 
 const lookupField = (payload: Record<string, unknown>, field: string) =>
@@ -467,12 +711,23 @@ const lookupField = (payload: Record<string, unknown>, field: string) =>
   }, payload)
 
 const extractSessionId = (input: Record<string, unknown> | undefined) => {
+  const event = isRecord(input?.event) ? input.event : undefined
+  const eventProperties = isRecord(input?.event) && isRecord(input.event.properties) ? input.event.properties : undefined
+  const eventInfo = isRecord(eventProperties?.info) ? eventProperties.info : undefined
+  const eventPart = isRecord(eventProperties?.part) ? eventProperties.part : undefined
   const value =
     input?.sessionID ??
     input?.sessionId ??
     input?.session_id ??
-    (isRecord(input?.event) ? input.event.properties : undefined)?.sessionID ??
-    (isRecord(input?.event) ? input.event.properties : undefined)?.sessionId
+    event?.sessionID ??
+    event?.sessionId ??
+    event?.session_id ??
+    eventProperties?.sessionID ??
+    eventProperties?.sessionId ??
+    eventInfo?.sessionID ??
+    eventInfo?.sessionId ??
+    eventPart?.sessionID ??
+    eventPart?.sessionId
   return typeof value === "string" && value.length > 0 ? value : "unknown-session"
 }
 
@@ -485,7 +740,7 @@ const deriveProjectRoot = (
     return path.dirname(path.dirname(absolute))
   }
 
-  const hints = [pluginInput.directory, pluginInput.worktree, pluginInput.project?.path].filter(
+  const hints = [pluginInput.directory, pluginInput.worktree, pluginInput.project?.worktree].filter(
     (value): value is string => Boolean(value),
   )
   for (const hint of hints) {
@@ -501,7 +756,7 @@ const deriveProjectRoot = (
       current = parent
     }
   }
-  return path.resolve(pluginInput.directory || pluginInput.worktree || pluginInput.project?.path || process.cwd())
+  return path.resolve(pluginInput.directory || pluginInput.worktree || pluginInput.project?.worktree || process.cwd())
 }
 
 const configFileForRoot = (rootDir: string, configPathOverride?: string) =>
@@ -517,7 +772,7 @@ const globalSettingsPath = () => {
 
 const readConfigFile = async (configPath: string) => {
   try {
-    return JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>
+    return normalizedRawSettings(JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>)
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
       return {}
@@ -550,7 +805,7 @@ const writeSettings = async (
   settings: Record<string, unknown>,
 ) => {
   await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(mergeSettings(settings), null, 2)}\n`, "utf-8")
+  await writeFile(configPath, `${JSON.stringify(persistedSettings(settings), null, 2)}\n`, "utf-8")
 }
 
 const currentUserName = () => process.env.USER || process.env.LOGNAME || "user"
@@ -562,7 +817,6 @@ const deriveAgentLabel = (input: Record<string, unknown> | undefined, pluginInpu
     isRecord(input?.agent) ? input.agent.id : undefined,
     isRecord(input?.agent) ? input.agent.name : undefined,
     pluginInput.project?.id,
-    pluginInput.project?.name,
     "root",
   ]
   const match = candidates.find((candidate) => typeof candidate === "string" && candidate.length > 0)
@@ -580,6 +834,76 @@ const deriveParentAgentLabel = (input: Record<string, unknown> | undefined) => {
   return typeof match === "string" ? match : null
 }
 
+const resolveGitDir = async (rootDir: string): Promise<string | null> => {
+  const directGitDir = path.join(rootDir, ".git")
+  try {
+    const statTarget = await readFile(directGitDir, "utf-8")
+    const prefix = "gitdir:"
+    if (statTarget.trim().startsWith(prefix)) {
+      const relativeGitDir = statTarget.trim().slice(prefix.length).trim()
+      return path.resolve(rootDir, relativeGitDir)
+    }
+  } catch {
+    if (existsSync(directGitDir)) {
+      return directGitDir
+    }
+  }
+
+  return existsSync(directGitDir) ? directGitDir : null
+}
+
+const deriveGitBranchLabel = async (rootDir: string): Promise<string | null> => {
+  const gitDir = await resolveGitDir(rootDir)
+  if (!gitDir) return null
+
+  try {
+    const head = (await readFile(path.join(gitDir, "HEAD"), "utf-8")).trim()
+    const branchPrefix = "ref: refs/heads/"
+    if (head.startsWith(branchPrefix)) {
+      return normalizeId(head.slice(branchPrefix.length))
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+const deriveSessionScope = async ({
+  workspaceId,
+  sessionStrategy,
+  rootDir,
+  repoName,
+  currentDirectory,
+  sessionId,
+}: {
+  workspaceId: string
+  sessionStrategy: SessionStrategy
+  rootDir: string
+  repoName: string
+  currentDirectory: string
+  sessionId: string
+}) => {
+  if (sessionStrategy === "per-directory") {
+    return `${workspaceId}:${normalizeId(path.basename(currentDirectory))}`
+  }
+
+  if (sessionStrategy === "per-session" || sessionStrategy === "chat-instance") {
+    return `${workspaceId}:${normalizeId(sessionId)}`
+  }
+
+  if (sessionStrategy === "global") {
+    return `${workspaceId}:global`
+  }
+
+  if (sessionStrategy === "git-branch") {
+    const branchLabel = await deriveGitBranchLabel(rootDir)
+    return `${workspaceId}:${branchLabel || normalizeId(repoName)}`
+  }
+
+  return `${workspaceId}:${normalizeId(repoName)}`
+}
+
 const deriveRuntimeHandle = async (
   pluginInput: PluginInput,
   input: Record<string, unknown> | undefined,
@@ -589,27 +913,30 @@ const deriveRuntimeHandle = async (
   const { configPath, globalConfigPath, settings } = await resolveSettings(rootDir, configPathOverride)
   const sessionId = extractSessionId(input)
   const repoName = path.basename(rootDir)
-  const workspaceId = normalizeId(settings.workspace || pluginInput.project?.name || pluginInput.project?.id || repoName)
+  const workspaceId = normalizeId(settings.workspace || pluginInput.project?.id || repoName)
   const userPeerId = normalizeId(`user:${settings.peerName || currentUserName()}`)
   const agentLabel = deriveAgentLabel(input, pluginInput)
   const parentAgentLabel = deriveParentAgentLabel(input)
-  const rootAgentPeerId = normalizeId(settings.aiPeer || `opencode:${agentLabel}`)
-  const childAgentPeerId = parentAgentLabel && parentAgentLabel !== agentLabel ? rootAgentPeerId : null
-  const parentAgentObserverPeerId = parentAgentLabel ? normalizeId(`opencode:${parentAgentLabel}`) : null
+  const childAgentPeerId =
+    settings.peerModel === "hierarchical" && parentAgentLabel && parentAgentLabel !== agentLabel
+      ? normalizeId(`opencode:${agentLabel}`)
+      : null
+  const rootAgentPeerId = normalizeId(settings.aiPeer || "opencode")
+  const activeAgentPeerId = childAgentPeerId ?? rootAgentPeerId
+  const parentAgentObserverPeerId =
+    settings.peerModel === "hierarchical" && parentAgentLabel ? normalizeId(`opencode:${parentAgentLabel}`) : null
 
-  let sessionScope = workspaceId
-  if (settings.sessionStrategy === "per-directory") {
-    const cwd = pluginInput.directory || pluginInput.worktree || rootDir
-    sessionScope = `${workspaceId}:${normalizeId(path.basename(cwd))}`
-  } else if (settings.sessionStrategy === "per-session") {
-    sessionScope = `${workspaceId}:${normalizeId(sessionId)}`
-  } else if (settings.sessionStrategy === "global") {
-    sessionScope = `${workspaceId}:global`
-  } else {
-    sessionScope = `${workspaceId}:${normalizeId(repoName)}`
-  }
+  const cwd = pluginInput.directory || pluginInput.worktree || rootDir
+  const sessionScope = await deriveSessionScope({
+    workspaceId,
+    sessionStrategy: settings.sessionStrategy,
+    rootDir,
+    repoName,
+    currentDirectory: cwd,
+    sessionId,
+  })
 
-  const lineage = [rootAgentPeerId]
+  const lineage = [activeAgentPeerId]
   if (parentAgentObserverPeerId && parentAgentObserverPeerId !== rootAgentPeerId) {
     lineage.unshift(parentAgentObserverPeerId)
   }
@@ -624,10 +951,76 @@ const deriveRuntimeHandle = async (
     sessionKey: normalizeId(`${settings.sessionStrategy}:${sessionScope}:${lineage.join(":")}`),
     userPeerId,
     rootAgentPeerId,
+    activeAgentPeerId,
     childAgentPeerId,
     parentAgentObserverPeerId,
   }
 }
+
+const buildPeerTopology = (handle: Pick<
+  RuntimeHandle,
+  "config" | "userPeerId" | "rootAgentPeerId" | "activeAgentPeerId" | "childAgentPeerId" | "parentAgentObserverPeerId"
+>): PeerTopology => {
+  const userPeer: PeerDescription = {
+    id: handle.userPeerId,
+    observeMe: true,
+    observeOthers: false,
+  }
+  const rootAgentPeer: PeerDescription = {
+    id: handle.rootAgentPeerId,
+    observeMe: true,
+    observeOthers: true,
+  }
+  const childAgentPeer =
+    handle.childAgentPeerId === null
+      ? null
+      : {
+          id: handle.childAgentPeerId,
+          observeMe: true,
+          observeOthers: false,
+          sessionScoped: true,
+        }
+  const parentAgentObserverPeer =
+    handle.parentAgentObserverPeerId === null
+      ? null
+      : {
+          id: handle.parentAgentObserverPeerId,
+          observeMe: false,
+          observeOthers: true,
+          modelsOnly: childAgentPeer ? [childAgentPeer.id] : [],
+        }
+
+  if (handle.config.peerModel === "hierarchical" && childAgentPeer && parentAgentObserverPeer) {
+    return {
+      sessionPeerConfigs: {
+        [childAgentPeer.id]: { observeMe: true, observeOthers: false },
+        [parentAgentObserverPeer.id]: { observeMe: false, observeOthers: true },
+      },
+      describedPeers: {
+        userPeer,
+        rootAgentPeer,
+        childAgentPeer,
+        parentAgentObserverPeer,
+      },
+    }
+  }
+
+  return {
+    sessionPeerConfigs: {
+      [userPeer.id]: { observeMe: true, observeOthers: false },
+      [rootAgentPeer.id]: { observeMe: true, observeOthers: true },
+    },
+    describedPeers: {
+      userPeer,
+      rootAgentPeer,
+      childAgentPeer: null,
+      parentAgentObserverPeer: null,
+    },
+  }
+}
+
+const sessionPeerAdditions = (topology: PeerTopology) =>
+  Object.entries(topology.sessionPeerConfigs).map(([peerId, config]) => [peerId, config] as const)
 
 const createActiveRuntime = async (
   pluginInput: PluginInput,
@@ -635,6 +1028,7 @@ const createActiveRuntime = async (
   configPathOverride?: string,
 ): Promise<ActiveRuntime> => {
   const handle = await deriveRuntimeHandle(pluginInput, input, configPathOverride)
+  const Honcho = await loadHonchoCtor()
   const honcho = new Honcho({
     apiKey: handle.config.apiKey || undefined,
     baseURL: handle.config.baseUrl || undefined,
@@ -643,22 +1037,11 @@ const createActiveRuntime = async (
   const userPeer = await honcho.peer(handle.userPeerId, {
     configuration: { observeMe: true },
   })
-  const agentPeer = await honcho.peer(handle.rootAgentPeerId, {
+  const agentPeer = await honcho.peer(handle.activeAgentPeerId, {
     configuration: { observeMe: true },
   })
   const session = await honcho.session(handle.sessionKey)
-  await session.addPeers({
-    [handle.userPeerId]: { observeMe: true, observeOthers: false },
-    [handle.rootAgentPeerId]: { observeMe: true, observeOthers: true },
-    ...(handle.parentAgentObserverPeerId
-      ? {
-          [handle.parentAgentObserverPeerId]: {
-            observeMe: false,
-            observeOthers: true,
-          },
-        }
-      : {}),
-  })
+  await session.addPeers(sessionPeerAdditions(buildPeerTopology(handle)) as never)
   return { ...handle, honcho, session, userPeer, agentPeer }
 }
 
@@ -687,34 +1070,29 @@ const extractPromptQuery = (input: Record<string, unknown> | undefined) => {
   return extractText(input.parts)
 }
 
-const describePeers = (handle: RuntimeHandle) => ({
-  userPeer: {
-    id: handle.userPeerId,
-    observeMe: true,
-    observeOthers: false,
-  },
-  rootAgentPeer: {
-    id: handle.rootAgentPeerId,
-    observeMe: true,
-    observeOthers: true,
-  },
-  childAgentPeer:
-    handle.childAgentPeerId === null
-      ? null
-      : {
-          id: handle.childAgentPeerId,
-          observeMe: true,
-          observeOthers: true,
-        },
-  parentAgentObserverPeer:
-    handle.parentAgentObserverPeerId === null
-      ? null
-      : {
-          id: handle.parentAgentObserverPeerId,
-          observeMe: false,
-          observeOthers: true,
-        },
-})
+const toUserFacingPeerDescription = (peer: PeerDescription | null): UserFacingPeerDescription | null => {
+  if (!peer) {
+    return null
+  }
+
+  return {
+    id: peer.id,
+    observe_me: peer.observeMe,
+    observe_others: peer.observeOthers,
+    ...(peer.sessionScoped ? { session_scoped: true } : {}),
+    ...(peer.modelsOnly ? { models_only: peer.modelsOnly } : {}),
+  }
+}
+
+const describePeers = (handle: RuntimeHandle) => {
+  const peers = buildPeerTopology(handle).describedPeers
+  return {
+    userPeer: toUserFacingPeerDescription(peers.userPeer),
+    rootAgentPeer: toUserFacingPeerDescription(peers.rootAgentPeer),
+    childAgentPeer: toUserFacingPeerDescription(peers.childAgentPeer),
+    parentAgentObserverPeer: toUserFacingPeerDescription(peers.parentAgentObserverPeer),
+  }
+}
 
 const createSessionState = (): SessionState => ({
   stableContext: null,
@@ -722,10 +1100,56 @@ const createSessionState = (): SessionState => ({
   lastInjectedContext: null,
   recentConclusions: [],
   conclusionFingerprints: new Set<string>(),
-  promptCount: 0,
-  lastPromptRefreshAt: null,
-  lastTopicKey: null,
+      capturedAssistantMessageIds: new Set<string>(),
+      assistantMessageParts: new Map<string, { sessionID: string; parts: Map<string, string> }>(),
+      promptCount: 0,
+      lastPromptRefreshAt: null,
+      lastTopicKey: null,
 })
+
+type SearchToolResult =
+  | {
+      ok: true
+      workspace: string
+      sessionKey: string
+      items: { id: string; peerId: string; content: string }[]
+    }
+  | {
+      ok: false
+      workspace?: string
+      sessionKey?: string
+      items: { id: string; peerId: string; content: string }[]
+      error: string
+    }
+
+type ChatToolResult =
+  | {
+      ok: true
+      workspace: string
+      sessionKey: string
+      response: string
+    }
+  | {
+      ok: false
+      workspace?: string
+      sessionKey?: string
+      response: string | null
+      error: string
+    }
+
+type ConclusionToolResult =
+  | {
+      ok: boolean
+      workspace: string
+      sessionKey: string
+      content: string
+    }
+  | {
+      ok: false
+      workspace?: string
+      sessionKey?: string
+      error: string
+    }
 
 const appendConclusion = (state: SessionState, content: string) => {
   state.recentConclusions.unshift(content)
@@ -768,22 +1192,27 @@ export const createHonchoRuntimePlugin =
       if (!handle.config.enabled) {
         return fallback
       }
-      if (!handle.config.apiKey) {
-        await log("warn", "Honcho runtime is enabled but HONCHO_API_KEY is unavailable.", {
+      if (!hasConfiguredAuth(handle.config)) {
+        await log("warn", "Honcho runtime is enabled but neither an API key nor a localhost baseUrl is configured.", {
           configPath: handle.configPath,
           globalConfigPath: handle.globalConfigPath,
           workspaceId: handle.workspaceId,
+          baseUrl: handle.config.baseUrl,
         })
         return fallback
       }
       try {
         return await action(await createActiveRuntime(pluginInput, input, configPath))
       } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
         await log("error", "Honcho runtime operation failed.", {
-          message: error instanceof Error ? error.message : String(error),
+          message: detail,
           sessionId: handle.sessionId,
           workspaceId: handle.workspaceId,
         })
+        if (isRecord(fallback) && typeof fallback.error === "string") {
+          return { ...fallback, error: detail } as T
+        }
         return fallback
       }
     }
@@ -808,7 +1237,10 @@ export const createHonchoRuntimePlugin =
         linkedHosts: handle.config.linkedHosts,
         saveMessages: handle.config.saveMessages,
         contextRefresh: handle.config.contextRefresh,
-        configured: Boolean(handle.config.apiKey),
+        peerModel: handle.config.peerModel,
+        configured: hasConfiguredAuth(handle.config),
+        localMode: isLocalBaseUrl(handle.config.baseUrl),
+        baseUrl: handle.config.baseUrl,
         peers: describePeers(handle),
         recentConclusions: state.recentConclusions,
         stableContext: state.stableContext,
@@ -822,11 +1254,33 @@ export const createHonchoRuntimePlugin =
       peer: ActiveRuntime["userPeer"] | ActiveRuntime["agentPeer"],
       content: string,
       metadata: Record<string, unknown>,
+      createdAt?: string,
     ) => {
       if (!runtime.config.saveMessages) return
       const trimmed = clampText(content.trim(), runtime.config.messageMaxChars)
       if (!trimmed) return
-      await runtime.session.addMessages(peer.message(trimmed, { metadata }))
+      await runtime.session.addMessages(peer.message(trimmed, { metadata, createdAt }))
+    }
+
+    const captureCompletedAssistantRecord = async (
+      runtime: ActiveRuntime,
+      state: SessionState,
+      payload: unknown,
+      source: string,
+    ) => {
+      const update = extractCompletedAssistantMessage(payload, state.assistantMessageParts)
+      if (!update || state.capturedAssistantMessageIds.has(update.messageId)) {
+        return false
+      }
+
+      state.capturedAssistantMessageIds.add(update.messageId)
+      await captureMessage(runtime, runtime.agentPeer, update.text, {
+        source,
+        sessionId: runtime.sessionId,
+        messageId: update.messageId,
+      }, update.createdAt)
+      state.assistantMessageParts.delete(update.messageId)
+      return true
     }
 
     const hydrateSessionStartContext = async (runtime: ActiveRuntime, state: SessionState) => {
@@ -921,7 +1375,7 @@ export const createHonchoRuntimePlugin =
       })
       const compiled = formatPromptContextBlock(
         parseSessionSummary(sessionContext.summary),
-        parseRepresentation(sessionContext.representation),
+        parseRepresentation(sessionContext.peerRepresentation),
       )
       state.cachedPromptContext = compiled || null
       state.lastPromptRefreshAt = Date.now()
@@ -975,8 +1429,20 @@ export const createHonchoRuntimePlugin =
           }, undefined)
           return
         }
+        if (event.type === "message.part.updated") {
+          const state = getState(sessionId)
+          upsertAssistantMessagePart(state.assistantMessageParts, payload)
+          return
+        }
+        if (event.type === "message.updated") {
+          await withRuntime(payload, async (runtime) => {
+            const state = getState(runtime.sessionId)
+            await captureCompletedAssistantRecord(runtime, state, payload, `event.${event.type}`)
+          }, undefined)
+          return
+        }
         if (event.type === "session.idle" || event.type === "session.compacted") {
-          await withRuntime(payload, async () => {
+          await withRuntime(payload, async (runtime) => {
             await log("info", "Honcho lifecycle boundary observed.", {
               event: event.type,
               ...(await runtimeStatus(payload)),
@@ -990,20 +1456,18 @@ export const createHonchoRuntimePlugin =
         if (!command.startsWith("honcho:") && !command.startsWith("honcho-")) {
           return
         }
-        output.metadata ??= {}
-        output.metadata.honcho = {
-          controlPlane: true,
-          projectSettings: true,
-        }
+        output.parts = output.parts || []
       },
       "shell.env": async (input, output) => {
         const handle = await deriveRuntimeHandle(pluginInput, input, configPath)
-        output.env.HONCHO_API_KEY = handle.config.apiKey
+        if (handle.config.apiKey) {
+          output.env.HONCHO_API_KEY = handle.config.apiKey
+        }
         output.env.HONCHO_URL = handle.config.baseUrl
         output.env.HONCHO_WORKSPACE_ID = handle.workspaceId
       },
-      "chat.message": async (input) => {
-        const message = extractText(input.parts)
+      "chat.message": async (input, output) => {
+        const message = extractText(output.parts)
         if (!message || message.startsWith("/")) {
           return
         }
@@ -1013,7 +1477,7 @@ export const createHonchoRuntimePlugin =
           await captureMessage(runtime, runtime.userPeer, message, {
             source: "chat.message",
             sessionId: runtime.sessionId,
-          })
+          }, timestampToIso(output.message?.time?.created))
           if (runtime.config.writeFrequency === "async" || runtime.config.writeFrequency === "turn") {
             const candidate = durableConclusionCandidate(message, runtime.config)
             if (candidate) {
@@ -1024,7 +1488,7 @@ export const createHonchoRuntimePlugin =
       },
       "experimental.chat.system.transform": async (input, output) => {
         const handle = await deriveRuntimeHandle(pluginInput, input, configPath)
-        if (!handle.config.enabled || handle.config.recallMode === "tools" || !handle.config.apiKey) {
+        if (!handle.config.enabled || handle.config.recallMode === "tools" || !hasConfiguredAuth(handle.config)) {
           return
         }
         const query = extractPromptQuery(input)
@@ -1054,6 +1518,9 @@ export const createHonchoRuntimePlugin =
           )
         }, undefined)
       },
+      "experimental.chat.messages.transform": async (_input, output) => {
+        void output
+      },
       "experimental.session.compacting": async (input, output) => {
         const handle = await deriveRuntimeHandle(pluginInput, input, configPath)
         const state = getState(handle.sessionId)
@@ -1064,11 +1531,15 @@ export const createHonchoRuntimePlugin =
             `Workspace: ${handle.workspaceId}`,
             `Session key: ${handle.sessionKey}`,
             `Recall mode: ${handle.config.recallMode}`,
+            `Peer model: ${handle.config.peerModel}`,
             `Write frequency: ${handle.config.writeFrequency}`,
-            `User peer: ${handle.userPeerId} (observeMe=true, observeOthers=false)`,
-            `Root agent peer: ${handle.rootAgentPeerId} (observeMe=true, observeOthers=true)`,
+            `User peer: ${handle.userPeerId} (observe_me=true, observe_others=false)`,
+            `Root agent peer: ${handle.rootAgentPeerId} (observe_me=true, observe_others=true)`,
+            handle.childAgentPeerId
+              ? `Child agent peer: ${handle.childAgentPeerId} (observe_me=true, observe_others=false, session_scoped=true)`
+              : "Child agent peer: none",
             handle.parentAgentObserverPeerId
-              ? `Parent observer peer: ${handle.parentAgentObserverPeerId} (observeMe=false, observeOthers=true)`
+              ? `Parent observer peer: ${handle.parentAgentObserverPeerId} (observe_me=false, observe_others=true, models_only=${handle.childAgentPeerId || "none"})`
               : "Parent observer peer: none",
             state.lastInjectedContext ? `Last injected memory:\n${state.lastInjectedContext}` : "Last injected memory: none",
             state.recentConclusions.length > 0
@@ -1077,35 +1548,11 @@ export const createHonchoRuntimePlugin =
           ].join("\n"),
         )
       },
-      "tool.execute.before": async (input, output) => {
-        output.metadata ??= {}
-        output.metadata.honcho = {
-          observed: true,
-        }
+      "tool.execute.before": async (_input, output) => {
+        output.args = output.args
       },
-      "tool.execute.after": async (input) => {
-        await withRuntime(input, async (runtime) => {
-          const toolName = typeof input.tool === "string" ? input.tool : "unknown-tool"
-          const resultText =
-            typeof input.result === "string"
-              ? input.result
-              : typeof input.output === "string"
-                ? input.output
-                : ""
-          if (!resultText.trim()) {
-            return
-          }
-          await captureMessage(runtime, runtime.agentPeer, `${toolName} result: ${clampText(resultText.trim(), 1200)}`, {
-            source: "tool.execute.after",
-            tool: toolName,
-          })
-          if (runtime.config.writeFrequency === "async" && toolName.startsWith("honcho_")) {
-            const candidate = durableConclusionCandidate(resultText, runtime.config)
-            if (candidate) {
-              await maybeWriteConclusion(runtime, candidate, "tool.execute.after")
-            }
-          }
-        }, undefined)
+      "tool.execute.after": async () => {
+        return
       },
       tool: {
         honcho_get_config: tool({
@@ -1121,60 +1568,83 @@ export const createHonchoRuntimePlugin =
         }),
         honcho_setup: tool({
           description:
-            "Validate Honcho setup for OpenCode and persist a shared API key to ~/.config/opencode/honcho.json for all future projects when provided.",
+            "Validate Honcho setup for OpenCode and persist shared Honcho credentials or a localhost baseUrl to ~/.config/opencode/honcho.json for all future projects when provided.",
           args: {
             apiKey: tool.schema.string().optional(),
             baseUrl: tool.schema.string().optional(),
             persistGlobal: tool.schema.boolean().optional(),
           },
           async execute(args, context) {
-            const handle = await deriveRuntimeHandle(pluginInput, { sessionID: context.sessionID }, configPath)
-            const shouldPersistGlobal = args.persistGlobal !== false
-            const globalPersisted = await readConfigFile(handle.globalConfigPath)
-            const nextGlobal = { ...globalPersisted }
-            const nextHosts = isRecord(nextGlobal.hosts) ? { ...nextGlobal.hosts } : {}
-            const nextHostEntry = hostScopedSettings(nextHosts.opencode) ?? {
-              workspace: "opencode",
-              aiPeer: "opencode",
-              linkedHosts: [],
-            }
-            const providedApiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : ""
-            const providedBaseUrl = typeof args.baseUrl === "string" ? args.baseUrl.trim() : ""
-            const effectiveApiKey = providedApiKey || handle.config.apiKey || ""
-            const persistedFields: string[] = []
+            let resolvedGlobalConfigPath = globalSettingsPath()
+            try {
+              const handle = await deriveRuntimeHandle(pluginInput, { sessionID: context.sessionID }, configPath)
+              resolvedGlobalConfigPath = handle.globalConfigPath
+              const shouldPersistGlobal = args.persistGlobal !== false
+              const globalPersisted = await readConfigFile(handle.globalConfigPath)
+              const nextGlobal = { ...globalPersisted }
+              const nextHosts = isRecord(nextGlobal.hosts) ? { ...nextGlobal.hosts } : {}
+              const nextHostEntry = hostScopedSettings(nextHosts.opencode) ?? {
+                workspace: "opencode",
+                aiPeer: "opencode",
+                linkedHosts: [],
+              }
+              const providedApiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : ""
+              const providedBaseUrl = typeof args.baseUrl === "string" ? args.baseUrl.trim() : ""
+              const effectiveApiKey = providedApiKey || handle.config.apiKey || ""
+              const effectiveBaseUrl =
+                providedBaseUrl || (providedApiKey ? DEFAULT_SETTINGS.baseUrl : handle.config.baseUrl || DEFAULT_SETTINGS.baseUrl)
+              const persistedFields: string[] = []
 
-            if (shouldPersistGlobal) {
-              nextGlobal.globalOverride = nextGlobal.globalOverride === true
-              if (effectiveApiKey) {
-                setSettingValue(nextGlobal, "apiKey", effectiveApiKey)
-                persistedFields.push("apiKey")
+              if (shouldPersistGlobal) {
+                nextGlobal.globalOverride = nextGlobal.globalOverride === true
+                if (effectiveApiKey) {
+                  setSettingValue(nextGlobal, "apiKey", effectiveApiKey)
+                  persistedFields.push(PERSISTED_API_KEY_FIELD)
+                }
+                if (effectiveBaseUrl && (providedBaseUrl || providedApiKey)) {
+                  setSettingValue(nextGlobal, "baseUrl", effectiveBaseUrl)
+                  persistedFields.push("baseUrl")
+                }
+                nextHosts.opencode = nextHostEntry
+                nextGlobal.hosts = nextHosts
+                if (persistedFields.length > 0) {
+                  await writeSettings(handle.globalConfigPath, nextGlobal)
+                } else if (!isRecord(globalPersisted.hosts) || !isRecord(globalPersisted.hosts.opencode)) {
+                  await writeSettings(handle.globalConfigPath, nextGlobal)
+                }
               }
-              if (providedBaseUrl) {
-                setSettingValue(nextGlobal, "baseUrl", providedBaseUrl)
-                persistedFields.push("baseUrl")
-              }
-              nextHosts.opencode = nextHostEntry
-              nextGlobal.hosts = nextHosts
-              if (persistedFields.length > 0) {
-                await writeSettings(handle.globalConfigPath, nextGlobal)
-              } else if (!isRecord(globalPersisted.hosts) || !isRecord(globalPersisted.hosts.opencode)) {
-                await writeSettings(handle.globalConfigPath, nextGlobal)
-              }
-            }
 
-            return JSON.stringify(
-              {
-                ok: Boolean(effectiveApiKey),
-                globalConfigPath: handle.globalConfigPath,
-                persistedFields,
-                message: effectiveApiKey
-                  ? "Honcho setup is ready."
-                  : "No Honcho API key is configured. Pass one to /honcho:setup <key> or set HONCHO_API_KEY before running setup.",
-                status: await runtimeStatus({ sessionID: context.sessionID }),
-              },
-              null,
-              2,
-            )
+              const configured = Boolean(effectiveApiKey) || isLocalBaseUrl(effectiveBaseUrl)
+              return JSON.stringify(
+                {
+                  ok: configured,
+                  globalConfigPath: handle.globalConfigPath,
+                  persistedFields,
+                  message: effectiveApiKey
+                    ? effectiveBaseUrl === DEFAULT_SETTINGS.baseUrl
+                      ? `Honcho setup is ready for cloud mode at ${DEFAULT_SETTINGS.baseUrl}.`
+                      : `Honcho setup is ready with endpoint ${effectiveBaseUrl}.`
+                    : isLocalBaseUrl(effectiveBaseUrl)
+                      ? `Honcho setup is ready for local mode at ${effectiveBaseUrl}.`
+                      : "No Honcho API key is configured. Pass one to /honcho:setup <key> or set HONCHO_API_KEY before running setup. For a local Honcho instance, set baseUrl to http://127.0.0.1:8000 or http://localhost:8000.",
+                  status: await runtimeStatus({ sessionID: context.sessionID }),
+                },
+                null,
+                2,
+              )
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error)
+              return JSON.stringify(
+                {
+                  ok: false,
+                  globalConfigPath: resolvedGlobalConfigPath,
+                  error: `Failed to persist Honcho setup: ${detail}`,
+                  message: "Honcho setup could not be saved. Check the config path and filesystem permissions, then retry.",
+                },
+                null,
+                2,
+              )
+            }
           },
         }),
         honcho_status: tool({
@@ -1229,7 +1699,7 @@ export const createHonchoRuntimePlugin =
           },
           async execute(args, context) {
             return JSON.stringify(
-              await withRuntime(
+              await withRuntime<SearchToolResult>(
                 { ...args, sessionID: context.sessionID },
                 async (runtime) => {
                   const messages = await runtime.session.search(args.query, {
@@ -1258,7 +1728,7 @@ export const createHonchoRuntimePlugin =
           args: { query: tool.schema.string() },
           async execute(args, context) {
             return JSON.stringify(
-              await withRuntime(
+              await withRuntime<ChatToolResult>(
                 { ...args, sessionID: context.sessionID },
                 async (runtime) => ({
                   ok: true,
@@ -1282,24 +1752,55 @@ export const createHonchoRuntimePlugin =
           description: "Create a durable Honcho memory for this OpenCode project using the current peer and session mapping.",
           args: { content: tool.schema.string() },
           async execute(args, context) {
-            return JSON.stringify(
-              await withRuntime(
-                { ...args, sessionID: context.sessionID },
-                async (runtime) => {
-                  const content = clampText(args.content.trim(), runtime.config.dialecticMaxChars)
-                  const created = await maybeWriteConclusion(runtime, content, "tool.create_conclusion")
-                  return {
-                    ok: created,
-                    workspace: runtime.workspaceId,
-                    sessionKey: runtime.sessionKey,
-                    content,
-                  }
+            const handle = await deriveRuntimeHandle(pluginInput, { ...args, sessionID: context.sessionID }, configPath)
+            if (!handle.config.enabled) {
+              return JSON.stringify({ ok: false, error: "Honcho is disabled." }, null, 2)
+            }
+            if (!hasConfiguredAuth(handle.config)) {
+              return JSON.stringify(
+                {
+                  ok: false,
+                  error: "Honcho is not configured with an API key or localhost baseUrl.",
+                  workspace: handle.workspaceId,
+                  sessionKey: handle.sessionKey,
                 },
-                { ok: false, error: "Honcho is unavailable for durable writes." },
-              ),
-              null,
-              2,
-            )
+                null,
+                2,
+              )
+            }
+
+            try {
+              const runtime = await createActiveRuntime(pluginInput, { ...args, sessionID: context.sessionID }, configPath)
+              const content = clampText(args.content.trim(), runtime.config.dialecticMaxChars)
+              const created = await maybeWriteConclusion(runtime, content, "tool.create_conclusion")
+              return JSON.stringify(
+                {
+                  ok: created,
+                  workspace: runtime.workspaceId,
+                  sessionKey: runtime.sessionKey,
+                  content,
+                },
+                null,
+                2,
+              )
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error)
+              await log("error", "Honcho durable write failed.", {
+                message: detail,
+                sessionId: handle.sessionId,
+                workspaceId: handle.workspaceId,
+              })
+              return JSON.stringify(
+                {
+                  ok: false,
+                  error: detail,
+                  workspace: handle.workspaceId,
+                  sessionKey: handle.sessionKey,
+                },
+                null,
+                2,
+              )
+            }
           },
         }),
       },
@@ -1307,4 +1808,21 @@ export const createHonchoRuntimePlugin =
   }
 
 export const HonchoRuntimePlugin = createHonchoRuntimePlugin()
+export const __testing = {
+  extractCompletedAssistantMessage,
+  honchoSdkImportPath: HONCHO_SDK_IMPORT_PATH,
+  buildPeerTopology,
+  defaultSettings: DEFAULT_SETTINGS,
+  deriveSessionScope,
+  timestampToIso,
+  upsertAssistantMessagePart,
+  extractSessionId,
+  installGlobalConfig,
+  loadHonchoCtorForTest: loadHonchoCtor,
+  loadHonchoModuleForTest: loadHonchoModule,
+  normalizeId,
+  resolveHonchoCtor,
+  sessionPeerAdditions,
+  scaffoldTemplates,
+}
 export default HonchoRuntimePlugin

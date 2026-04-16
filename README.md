@@ -1,71 +1,98 @@
-# @plasticlabs/opencode-honcho
+# Honcho Plugin for Opencode
 
-TypeScript-native Honcho plugin runtime for OpenCode.
+> Add AI-native memory to OpenCode
 
-This package is the publishable runtime that powers the generated local OpenCode plugin bundle. It uses the Honcho TypeScript SDK directly and integrates with OpenCode's native plugin hooks for:
+Give OpenCode long-term memory that survives context wipes, session restarts, and fresh chats. Honcho remembers what you're working on, durable preferences, and prior context across your projects.
 
-- prompt-level memory injection
-- automatic durable memory writes
-- multi-agent peer and session mapping
-- project-local overrides plus global OpenCode Honcho config
-- native OpenCode tools and slash-command control
+## Quick Start
 
-## Repository Layout
+### Step 1: Get Your Honcho API Key
 
-- `src/*.ts` is the source of truth
-- `dist/*.js` is the checked-in runtime artifact used by emitted OpenCode bundles
-- `vendor/honcho-sdk` and `vendor/zod` are vendored runtime dependencies used to avoid plugin startup resolution issues inside OpenCode
+1. Go to **[app.honcho.dev](https://app.honcho.dev)**
+2. Sign up or log in
+3. Copy your API key
 
-## Setup
+### Step 2: Install the Plugin
 
-### Development
+This package installs the Honcho plugin into OpenCode and writes the Honcho command templates into your global OpenCode config.
 
 ```bash
-npm install
-npm run check
-npm run build
+npx @honcho-ai/opencode-honcho install
 ```
 
-### Package Validation
+This installer expects the `opencode` CLI to already be installed and available on your `PATH`.
+If the installer cannot find `opencode`, restart your shell or source your shell config and run the command again.
 
-```bash
-npm pack
+### Step 3: Run Setup in OpenCode
+
+1. Start OpenCode
+2. Run `/honcho:setup`
+3. Keep the default `Honcho Cloud` option unless you explicitly want a self-hosted or local endpoint
+4. Enter your Honcho API key
+5. Run `/honcho:status` to verify the runtime
+
+### Step 4: (Optional) Kickstart with an Interview
+
+```text
+/honcho:interview
 ```
 
-### OpenCode Runtime Usage
+This captures durable preferences or stable project context into Honcho memory.
 
-This package is meant to be consumed by an emitted local OpenCode bundle, not installed as a standalone top-level OpenCode command.
+## What You Get
 
-The generated OpenCode project bundle should contain:
+- **Persistent Memory** - OpenCode can retain durable context across sessions
+- **Cloud or Local Deployments** - Use Honcho Cloud or point at a self-hosted or local Honcho instance
+- **Workspace Mapping** - OpenCode projects map to Honcho workspaces
+- **Session Mapping** - Sessions can be scoped per directory, repo, branch, chat instance, or globally
+- **Durable Writes** - Honcho can retain stable conclusions and session context
+- **Memory Retrieval** - Search memory, query Honcho knowledge, and inject relevant context into prompts
+- **Peer Modeling** - Supports the default classic peer model and optional hierarchical modeling for delegated agent flows
 
-- `opencode.json`
-- `.opencode/plugins/honcho-runtime.js`
-- `.opencode/package.json`
-- `.opencode/honcho.json`
+## Installation Output
 
-The thin plugin shim imports this package's `dist/index.js`.
+The installer:
 
-## Runtime Config
+- registers `@honcho-ai/opencode-honcho` with OpenCode
+- enables both native server and TUI plugin targets
+- writes Honcho command templates into global OpenCode config
+- activates the plugin globally for all OpenCode projects
 
-The runtime uses two config layers:
+## Configuration
 
-- global OpenCode Honcho config: `~/.config/opencode/honcho.json`
-- project overrides: `.opencode/honcho.json`
+OpenCode Honcho configuration lives in:
 
-Effective precedence is:
+- global config: `~/.config/opencode/honcho.json`
+- optional project override: `.opencode/honcho.json`
 
-1. project `.opencode/honcho.json`
-2. global `~/.config/opencode/honcho.json`
-3. environment
-4. built defaults
+The global config is the normal place to start. Project config is only needed when a specific repo should behave differently.
 
-The default global host mapping is Claude-style under `hosts.opencode`:
-
-```json
+```jsonc
 {
-  "apiKey": "hch-...",
-  "peerName": "alice",
+  "enabled": true,
+  "honchoApiKey": "hch-...",
+  "baseUrl": "https://api.honcho.dev",
+  "peerName": "",
+  "aiPeer": "",
+  "workspace": "",
   "globalOverride": false,
+  "linkedHosts": [],
+  "recallMode": "hybrid",
+  "observation": "directional",
+  "peerModel": "classic",
+  "writeFrequency": "async",
+  "sessionStrategy": "per-directory",
+  "dialecticReasoningLevel": "low",
+  "dialecticDynamic": true,
+  "dialecticMaxChars": 600,
+  "messageMaxChars": 25000,
+  "saveMessages": true,
+  "contextRefresh": {
+    "messageThreshold": 30,
+    "ttlSeconds": 300,
+    "skipTrivialPrompts": true,
+    "useSessionStartDialectic": true
+  },
   "hosts": {
     "opencode": {
       "workspace": "opencode",
@@ -76,32 +103,76 @@ The default global host mapping is Claude-style under `hosts.opencode`:
 }
 ```
 
-## OpenCode Behavior
+### Cloud vs Local
 
-The runtime intentionally reflects current OpenCode host capabilities:
+For Honcho Cloud:
 
-- `hard_command_interception`: unsupported
-- `pre_model_command_execute`: supported
-- `structured_question_ui`: unsupported
-- `persistent_background_runtime`: unsupported
+- `honchoApiKey` is required
+- `baseUrl` should remain `https://api.honcho.dev`
 
-The runtime follows Claude-style memory layering:
+For self-hosted or local Honcho:
 
-- deeper warmup at session start
-- cached lightweight prompt injection on normal turns
-- explicit deep retrieval through Honcho tools
+- `baseUrl` should point to your deployment, for example `http://127.0.0.1:8000`
+- `honchoApiKey` is required only if that deployment requires authentication
 
-## Publishing
+If OpenCode is running in Docker or another remote environment, `localhost` may not refer to your machine. The configured `baseUrl` must be reachable from the OpenCode host runtime.
 
-This repo is the npm package surface that should be published as `@plasticlabs/opencode-honcho`.
+### Session Strategies
 
-It should include:
+| Strategy | Behavior | Best for |
+| --- | --- | --- |
+| `per-directory` | One session per working directory | Default project memory |
+| `per-repo` | One session per repository | Repos with multiple entry directories |
+| `git-branch` | Session changes with the current branch | Branch-specific workflows |
+| `per-session` | New session for each OpenCode session id | Short-lived isolated work |
+| `chat-instance` | Session follows the current chat instance | Highly ephemeral usage |
+| `global` | One session for everything | Shared memory across all work |
 
-- `src/`
-- `dist/`
-- `vendor/`
-- `README.md`
-- `package.json`
-- `tsconfig.json`
+## Operator Commands
 
-It should not include generated project `.opencode/` bundles or machine-local config.
+| Command | Description |
+| --- | --- |
+| `/honcho:setup` | First-time setup for cloud or local Honcho |
+| `/honcho:status` | Show effective Honcho status for the current OpenCode project |
+| `/honcho:settings` | Show effective config values and config paths |
+| `/honcho:set` | Persist a config field in `.opencode/honcho.json` |
+| `/honcho:unset` | Reset a project config field back to its default |
+| `/honcho:mode` | Change `recallMode` |
+| `/honcho:write` | Change `writeFrequency` only. This does not create memory |
+| `/honcho:interview` | Capture durable memory or preferences into Honcho |
+
+## Agent Tools
+
+The plugin exposes these tools inside OpenCode:
+
+| Tool | Description |
+| --- | --- |
+| `honcho_setup` | Validate setup and persist shared credentials or endpoint settings |
+| `honcho_status` | Show effective runtime status |
+| `honcho_get_config` | Read effective and persisted settings |
+| `honcho_set_config` | Update a persisted project setting |
+| `honcho_search` | Search Honcho session memory |
+| `honcho_chat` | Query Honcho for reasoning-backed context |
+| `honcho_create_conclusion` | Save a durable memory conclusion |
+
+## Plugin Surfaces
+
+The plugin uses these OpenCode plugin capabilities:
+
+- `event`
+- `chat.message`
+- `tool.execute.after`
+- `command.execute.before`
+- `experimental.chat.system.transform`
+- `experimental.session.compacting`
+- `shell.env`
+- `tool`
+
+## Development
+
+```bash
+npm install
+npm run build
+npm test
+npm run check
+```

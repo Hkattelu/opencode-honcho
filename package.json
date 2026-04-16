@@ -1,15 +1,24 @@
 {
-  "name": "@plasticlabs/opencode-honcho",
+  "name": "@honcho-ai/opencode-honcho",
   "version": "0.1.0",
   "type": "module",
   "description": "Honcho memory integration for OpenCode",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "opencode-honcho": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./server": {
+      "import": "./dist/server.js"
+    },
+    "./tui": {
+      "import": "./dist/tui.js"
     },
     "./capabilities": {
       "types": "./dist/capabilities.d.ts",
@@ -28,6 +37,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/**/*.test.js",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -35,6 +45,7 @@
     "zod": "4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.13.9",
     "typescript": "^5.9.3"
   }
 }

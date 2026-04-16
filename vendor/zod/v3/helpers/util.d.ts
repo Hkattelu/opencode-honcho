@@ -69,7 +69,7 @@ export declare const ZodParsedType: {
     date: "date";
     bigint: "bigint";
     symbol: "symbol";
-    function: "function";
+    "function": "function";
     undefined: "undefined";
     null: "null";
     array: "array";
