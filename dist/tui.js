@@ -1,234 +1,225 @@
+// src/tui.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-const PACKAGE_ID = "@honcho-ai/opencode-honcho";
-const DEFAULT_BASE_URL = "https://api.honcho.dev";
-const GLOBAL_SETTINGS_DIR_NAME = "opencode";
-const SETTINGS_FILE_NAME = "honcho.json";
-const globalSettingsPath = () => path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), GLOBAL_SETTINGS_DIR_NAME, SETTINGS_FILE_NAME);
-const isRecord = (value) => typeof value === "object" && value !== null;
-const isLocalBaseUrl = (value) => {
-    if (!value.trim())
-        return false;
-    try {
-        const url = new URL(value);
-        return ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
-    }
-    catch {
-        return false;
-    }
+var PACKAGE_ID = "@honcho-ai/opencode-honcho";
+var DEFAULT_BASE_URL = "https://api.honcho.dev";
+var GLOBAL_SETTINGS_DIR_NAME = "opencode";
+var SETTINGS_FILE_NAME = "honcho.json";
+var globalSettingsPath = () => path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), GLOBAL_SETTINGS_DIR_NAME, SETTINGS_FILE_NAME);
+var isRecord = (value) => typeof value === "object" && value !== null;
+var isLocalBaseUrl = (value) => {
+  if (!value.trim())
+    return false;
+  try {
+    const url = new URL(value);
+    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  } catch {
+    return false;
+  }
 };
-const readGlobalSettings = async () => {
-    const configPath = globalSettingsPath();
-    try {
-        const raw = await readFile(configPath, "utf-8");
-        const parsed = JSON.parse(raw);
-        return isRecord(parsed) ? parsed : {};
+var readGlobalSettings = async () => {
+  const configPath = globalSettingsPath();
+  try {
+    const raw = await readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : {};
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {};
     }
-    catch (error) {
-        if (error.code === "ENOENT") {
-            return {};
-        }
-        throw error;
-    }
+    throw error;
+  }
 };
-const writeGlobalSettings = async (settings) => {
-    const configPath = globalSettingsPath();
-    await mkdir(path.dirname(configPath), { recursive: true });
-    await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-    return configPath;
+var writeGlobalSettings = async (settings) => {
+  const configPath = globalSettingsPath();
+  await mkdir(path.dirname(configPath), { recursive: true });
+  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}
+`, "utf-8");
+  return configPath;
 };
-const normalizeSettings = (settings) => ({
-    baseUrl: typeof settings.baseUrl === "string" && settings.baseUrl.trim() ? settings.baseUrl : DEFAULT_BASE_URL,
-    apiKey: typeof settings.honchoApiKey === "string" && settings.honchoApiKey.trim()
-        ? settings.honchoApiKey.trim()
-        : typeof settings.apiKey === "string"
-            ? settings.apiKey.trim()
-            : "",
+var normalizeSettings = (settings) => ({
+  baseUrl: typeof settings.baseUrl === "string" && settings.baseUrl.trim() ? settings.baseUrl : DEFAULT_BASE_URL,
+  apiKey: typeof settings.honchoApiKey === "string" && settings.honchoApiKey.trim() ? settings.honchoApiKey.trim() : typeof settings.apiKey === "string" ? settings.apiKey.trim() : ""
 });
-const validateCloudApiKey = (value) => value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local.";
-const statusMessage = (settings) => {
-    const normalized = normalizeSettings(settings);
-    const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl);
-    const deployment = isLocalBaseUrl(normalized.baseUrl)
-        ? "Local / self-hosted"
-        : normalized.baseUrl === DEFAULT_BASE_URL
-            ? "Honcho Cloud"
-            : "Custom endpoint";
-    return [
-        `Configured: ${configured ? "yes" : "no"}`,
-        `Deployment: ${deployment}`,
-        `Base URL: ${normalized.baseUrl}`,
-        `API key: ${normalized.apiKey ? "set" : "not set"}`,
-        `Config path: ${globalSettingsPath()}`,
-        "",
-        configured ? "Honcho is ready for OpenCode." : "Run /honcho:setup to finish configuration.",
-    ].join("\n");
+var validateCloudApiKey = (value) => value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local.";
+var statusMessage = (settings) => {
+  const normalized = normalizeSettings(settings);
+  const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl);
+  const deployment = isLocalBaseUrl(normalized.baseUrl) ? "Local / self-hosted" : normalized.baseUrl === DEFAULT_BASE_URL ? "Honcho Cloud" : "Custom endpoint";
+  return [
+    `Configured: ${configured ? "yes" : "no"}`,
+    `Deployment: ${deployment}`,
+    `Base URL: ${normalized.baseUrl}`,
+    `API key: ${normalized.apiKey ? "set" : "not set"}`,
+    `Config path: ${globalSettingsPath()}`,
+    "",
+    configured ? "Honcho is ready for OpenCode." : "Run /honcho:setup to finish configuration."
+  ].join(`
+`);
 };
-const saveSettings = async (partial) => {
-    const current = await readGlobalSettings();
-    const nextApiKey = typeof partial.honchoApiKey === "string"
-        ? partial.honchoApiKey
-        : typeof partial.apiKey === "string"
-            ? partial.apiKey
-            : typeof current.honchoApiKey === "string"
-                ? current.honchoApiKey
-                : typeof current.apiKey === "string"
-                    ? current.apiKey
-                    : undefined;
-    const next = {
-        ...current,
-        ...partial,
-        honchoApiKey: nextApiKey,
-        hosts: {
-            ...current.hosts,
-            opencode: {
-                workspace: current.hosts?.opencode?.workspace || "opencode",
-                aiPeer: current.hosts?.opencode?.aiPeer || "opencode",
-                linkedHosts: current.hosts?.opencode?.linkedHosts || [],
-                ...partial.hosts?.opencode,
-            },
-        },
-    };
-    delete next.apiKey;
-    return writeGlobalSettings(next);
+var saveSettings = async (partial) => {
+  const current = await readGlobalSettings();
+  const nextApiKey = typeof partial.honchoApiKey === "string" ? partial.honchoApiKey : typeof partial.apiKey === "string" ? partial.apiKey : typeof current.honchoApiKey === "string" ? current.honchoApiKey : typeof current.apiKey === "string" ? current.apiKey : undefined;
+  const next = {
+    ...current,
+    ...partial,
+    honchoApiKey: nextApiKey,
+    hosts: {
+      ...current.hosts,
+      opencode: {
+        workspace: current.hosts?.opencode?.workspace || "opencode",
+        aiPeer: current.hosts?.opencode?.aiPeer || "opencode",
+        linkedHosts: current.hosts?.opencode?.linkedHosts || [],
+        ...partial.hosts?.opencode
+      }
+    }
+  };
+  delete next.apiKey;
+  return writeGlobalSettings(next);
 };
-const openStatusDialog = async (api) => {
-    const settings = await readGlobalSettings();
-    api.ui.dialog.replace(() => api.ui.DialogAlert({
-        title: "Honcho Status",
-        message: statusMessage(settings),
-    }));
+var openStatusDialog = async (api) => {
+  const settings = await readGlobalSettings();
+  api.ui.dialog.replace(() => api.ui.DialogAlert({
+    title: "Honcho Status",
+    message: statusMessage(settings)
+  }));
 };
-const openLocalApiKeyPrompt = (api, baseUrl) => {
-    api.ui.dialog.replace(() => api.ui.DialogPrompt({
-        title: "Optional Honcho API key",
-        placeholder: "Leave blank for local unauthenticated mode",
-        onConfirm: async (apiKey) => {
-            const configPath = await saveSettings({
-                baseUrl,
-                honchoApiKey: apiKey.trim(),
-            });
-            api.ui.dialog.replace(() => api.ui.DialogAlert({
-                title: "Honcho configured",
-                message: [
-                    `Saved settings to ${configPath}`,
-                    `Base URL: ${baseUrl}`,
-                    `API key: ${apiKey.trim() ? "set" : "not required for localhost mode"}`,
-                ].join("\n"),
-            }));
-        },
-        onCancel: () => api.ui.dialog.clear(),
-    }));
+var openLocalApiKeyPrompt = (api, baseUrl) => {
+  api.ui.dialog.replace(() => api.ui.DialogPrompt({
+    title: "Optional Honcho API key",
+    placeholder: "Leave blank for local unauthenticated mode",
+    onConfirm: async (apiKey) => {
+      const configPath = await saveSettings({
+        baseUrl,
+        honchoApiKey: apiKey.trim()
+      });
+      api.ui.dialog.replace(() => api.ui.DialogAlert({
+        title: "Honcho configured",
+        message: [
+          `Saved settings to ${configPath}`,
+          `Base URL: ${baseUrl}`,
+          `API key: ${apiKey.trim() ? "set" : "not required for localhost mode"}`
+        ].join(`
+`)
+      }));
+    },
+    onCancel: () => api.ui.dialog.clear()
+  }));
 };
-const openLocalBaseUrlPrompt = (api) => {
-    api.ui.dialog.replace(() => api.ui.DialogPrompt({
-        title: "Honcho API base URL",
-        placeholder: "http://127.0.0.1:8000",
-        value: "http://127.0.0.1:8000",
-        onConfirm: (baseUrl) => openLocalApiKeyPrompt(api, baseUrl.trim() || "http://127.0.0.1:8000"),
-        onCancel: () => api.ui.dialog.clear(),
-    }));
+var openLocalBaseUrlPrompt = (api) => {
+  api.ui.dialog.replace(() => api.ui.DialogPrompt({
+    title: "Honcho API base URL",
+    placeholder: "http://127.0.0.1:8000",
+    value: "http://127.0.0.1:8000",
+    onConfirm: (baseUrl) => openLocalApiKeyPrompt(api, baseUrl.trim() || "http://127.0.0.1:8000"),
+    onCancel: () => api.ui.dialog.clear()
+  }));
 };
-const openCloudApiKeyPrompt = (api) => {
-    api.ui.dialog.replace(() => api.ui.DialogPrompt({
-        title: "Honcho API key",
-        placeholder: "hch_...",
-        onConfirm: async (apiKey) => {
-            const validationError = validateCloudApiKey(apiKey);
-            if (validationError) {
-                api.ui.dialog.replace(() => api.ui.DialogAlert({
-                    title: "Honcho setup incomplete",
-                    message: validationError,
-                }));
-                return;
-            }
-            const configPath = await saveSettings({
-                baseUrl: DEFAULT_BASE_URL,
-                honchoApiKey: apiKey.trim(),
-            });
-            api.ui.dialog.replace(() => api.ui.DialogAlert({
-                title: "Honcho configured",
-                message: [
-                    `Saved settings to ${configPath}`,
-                    `Base URL: ${DEFAULT_BASE_URL}`,
-                    `API key: ${apiKey.trim() ? "set" : "not set"}`,
-                ].join("\n"),
-            }));
-        },
-        onCancel: () => api.ui.dialog.clear(),
-    }));
+var openCloudApiKeyPrompt = (api) => {
+  api.ui.dialog.replace(() => api.ui.DialogPrompt({
+    title: "Honcho API key",
+    placeholder: "hch_...",
+    onConfirm: async (apiKey) => {
+      const validationError = validateCloudApiKey(apiKey);
+      if (validationError) {
+        api.ui.dialog.replace(() => api.ui.DialogAlert({
+          title: "Honcho setup incomplete",
+          message: validationError
+        }));
+        return;
+      }
+      const configPath = await saveSettings({
+        baseUrl: DEFAULT_BASE_URL,
+        honchoApiKey: apiKey.trim()
+      });
+      api.ui.dialog.replace(() => api.ui.DialogAlert({
+        title: "Honcho configured",
+        message: [
+          `Saved settings to ${configPath}`,
+          `Base URL: ${DEFAULT_BASE_URL}`,
+          `API key: ${apiKey.trim() ? "set" : "not set"}`
+        ].join(`
+`)
+      }));
+    },
+    onCancel: () => api.ui.dialog.clear()
+  }));
 };
-const openSetupDialog = (api) => {
-    api.ui.dialog.replace(() => api.ui.DialogSelect({
-        title: "Configure Honcho",
-        flat: true,
-        options: [
-            {
-                title: "Honcho Cloud",
-                value: "cloud",
-                description: "Use the default Honcho Cloud endpoint",
-            },
-            {
-                title: "Self-hosted / local",
-                value: "local",
-                description: "Use a custom or localhost Honcho base URL",
-            },
-        ],
-        onSelect: (option) => {
-            if (option.value === "local") {
-                openLocalBaseUrlPrompt(api);
-                return;
-            }
-            openCloudApiKeyPrompt(api);
-        },
-    }));
+var openSetupDialog = (api) => {
+  api.ui.dialog.replace(() => api.ui.DialogSelect({
+    title: "Configure Honcho",
+    flat: true,
+    options: [
+      {
+        title: "Honcho Cloud",
+        value: "cloud",
+        description: "Use the default Honcho Cloud endpoint"
+      },
+      {
+        title: "Self-hosted / local",
+        value: "local",
+        description: "Use a custom or localhost Honcho base URL"
+      }
+    ],
+    onSelect: (option) => {
+      if (option.value === "local") {
+        openLocalBaseUrlPrompt(api);
+        return;
+      }
+      openCloudApiKeyPrompt(api);
+    }
+  }));
 };
-const tui = async (api) => {
-    api.command.register(() => [
-        {
-            title: "Honcho Setup",
-            value: "honcho.setup",
-            description: "Configure Honcho Cloud or local settings for OpenCode",
-            category: "Honcho",
-            slash: {
-                name: "honcho:setup",
-            },
-            onSelect: () => openSetupDialog(api),
-        },
-        {
-            title: "Honcho Status",
-            value: "honcho.status",
-            description: "Show Honcho configuration status for OpenCode",
-            category: "Honcho",
-            slash: {
-                name: "honcho:status",
-            },
-            onSelect: () => {
-                void openStatusDialog(api);
-            },
-        },
-        {
-            title: "Honcho Settings",
-            value: "honcho.settings",
-            description: "Show Honcho defaults and config path information",
-            category: "Honcho",
-            slash: {
-                name: "honcho:settings",
-            },
-            onSelect: () => {
-                void openStatusDialog(api);
-            },
-        },
-    ]);
+var tui = async (api) => {
+  api.command.register(() => [
+    {
+      title: "Honcho Setup",
+      value: "honcho.setup",
+      description: "Configure Honcho Cloud or local settings for OpenCode",
+      category: "Honcho",
+      slash: {
+        name: "honcho:setup"
+      },
+      onSelect: () => openSetupDialog(api)
+    },
+    {
+      title: "Honcho Status",
+      value: "honcho.status",
+      description: "Show Honcho configuration status for OpenCode",
+      category: "Honcho",
+      slash: {
+        name: "honcho:status"
+      },
+      onSelect: () => {
+        openStatusDialog(api);
+      }
+    },
+    {
+      title: "Honcho Settings",
+      value: "honcho.settings",
+      description: "Show Honcho defaults and config path information",
+      category: "Honcho",
+      slash: {
+        name: "honcho:settings"
+      },
+      onSelect: () => {
+        openStatusDialog(api);
+      }
+    }
+  ]);
 };
-const plugin = {
-    id: PACKAGE_ID,
-    tui,
+var plugin = {
+  id: PACKAGE_ID,
+  tui
 };
-export const __testing = {
-    normalizeSettings,
-    statusMessage,
-    validateCloudApiKey,
+var __testing = {
+  normalizeSettings,
+  statusMessage,
+  validateCloudApiKey
 };
-export default plugin;
+var tui_default = plugin;
+export {
+  tui_default as default,
+  __testing
+};

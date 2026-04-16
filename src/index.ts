@@ -1,71 +1,9 @@
 import { existsSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { createRequire } from "node:module"
 import path from "node:path"
 import { tool, type Plugin, type PluginInput } from "@opencode-ai/plugin"
+import { Honcho } from "@honcho-ai/sdk"
 import { installGlobalConfig, scaffoldTemplates } from "./scaffold.js"
-
-const HONCHO_SDK_IMPORT_PATH = "../vendor/honcho-sdk/dist/index.js"
-const requireFromHere = createRequire(import.meta.url)
-
-type HonchoSdkModule = typeof import("../vendor/honcho-sdk/dist/index.js")
-type HonchoSdkLoaderDeps = {
-  requireImpl?: (specifier: string) => unknown
-  importImpl?: (specifier: string) => Promise<unknown>
-}
-
-const describeSdkShape = (sdk: unknown) => {
-  if (!sdk || typeof sdk !== "object") {
-    return typeof sdk
-  }
-
-  const keys = Object.keys(sdk as Record<string, unknown>)
-  return keys.length > 0 ? keys.join(", ") : "<no enumerable keys>"
-}
-
-const resolveHonchoCtor = (sdk: unknown): HonchoSdkModule["Honcho"] => {
-  if (!sdk || typeof sdk !== "object") {
-    throw new Error(
-      `Honcho SDK constructor is unavailable. import path=${HONCHO_SDK_IMPORT_PATH}; module keys=${describeSdkShape(sdk)}`,
-    )
-  }
-
-  const direct = (sdk as { Honcho?: unknown }).Honcho
-  if (typeof direct === "function") {
-    return direct as HonchoSdkModule["Honcho"]
-  }
-
-  const fallback = (sdk as { default?: unknown }).default
-  if (fallback) {
-    return resolveHonchoCtor(fallback)
-  }
-
-  throw new Error(
-    `Honcho SDK constructor is unavailable. import path=${HONCHO_SDK_IMPORT_PATH}; module keys=${describeSdkShape(sdk)}`,
-  )
-}
-
-let honchoCtorPromise: Promise<HonchoSdkModule["Honcho"]> | null = null
-
-const loadHonchoModule = async (
-  deps: HonchoSdkLoaderDeps = {},
-): Promise<unknown> => {
-  const requireImpl = deps.requireImpl ?? ((specifier: string) => requireFromHere(specifier))
-  const importImpl = deps.importImpl ?? ((specifier: string) => import(specifier))
-
-  try {
-    return requireImpl(HONCHO_SDK_IMPORT_PATH)
-  } catch {
-    return importImpl(HONCHO_SDK_IMPORT_PATH)
-  }
-}
-
-const loadHonchoCtor = () => {
-  honchoCtorPromise ??= loadHonchoModule().then((sdk) => resolveHonchoCtor(sdk))
-  return honchoCtorPromise
-}
-
-type HonchoClient = InstanceType<HonchoSdkModule["Honcho"]>
 
 type RecallMode = "hybrid" | "context" | "tools"
 type ObservationMode = "directional" | "unified"
@@ -128,10 +66,10 @@ type RuntimeHandle = {
 }
 
 type ActiveRuntime = RuntimeHandle & {
-  honcho: HonchoClient
-  session: Awaited<ReturnType<HonchoClient["session"]>>
-  userPeer: Awaited<ReturnType<HonchoClient["peer"]>>
-  agentPeer: Awaited<ReturnType<HonchoClient["peer"]>>
+  honcho: Honcho
+  session: Awaited<ReturnType<Honcho["session"]>>
+  userPeer: Awaited<ReturnType<Honcho["peer"]>>
+  agentPeer: Awaited<ReturnType<Honcho["peer"]>>
 }
 
 type SessionState = {
@@ -1028,7 +966,6 @@ const createActiveRuntime = async (
   configPathOverride?: string,
 ): Promise<ActiveRuntime> => {
   const handle = await deriveRuntimeHandle(pluginInput, input, configPathOverride)
-  const Honcho = await loadHonchoCtor()
   const honcho = new Honcho({
     apiKey: handle.config.apiKey || undefined,
     baseURL: handle.config.baseUrl || undefined,
@@ -1810,7 +1747,7 @@ export const createHonchoRuntimePlugin =
 export const HonchoRuntimePlugin = createHonchoRuntimePlugin()
 export const __testing = {
   extractCompletedAssistantMessage,
-  honchoSdkImportPath: HONCHO_SDK_IMPORT_PATH,
+  honchoSdkImportPath: "@honcho-ai/sdk",
   buildPeerTopology,
   defaultSettings: DEFAULT_SETTINGS,
   deriveSessionScope,
@@ -1818,10 +1755,7 @@ export const __testing = {
   upsertAssistantMessagePart,
   extractSessionId,
   installGlobalConfig,
-  loadHonchoCtorForTest: loadHonchoCtor,
-  loadHonchoModuleForTest: loadHonchoModule,
   normalizeId,
-  resolveHonchoCtor,
   sessionPeerAdditions,
   scaffoldTemplates,
 }

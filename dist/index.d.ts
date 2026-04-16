@@ -1,9 +1,4 @@
 import { type Plugin } from "@opencode-ai/plugin";
-type HonchoSdkModule = typeof import("../vendor/honcho-sdk/dist/index.js");
-type HonchoSdkLoaderDeps = {
-    requireImpl?: (specifier: string) => unknown;
-    importImpl?: (specifier: string) => Promise<unknown>;
-};
 type RecallMode = "hybrid" | "context" | "tools";
 type ObservationMode = "directional" | "unified";
 type SessionStrategy = "per-repo" | "per-directory" | "per-session" | "global" | "git-branch" | "chat-instance";
@@ -111,10 +106,7 @@ export declare const __testing: {
         commandNames: string[];
         pluginSpec: string;
     }>;
-    loadHonchoCtorForTest: () => Promise<typeof import("../vendor/honcho-sdk/dist/client.js").Honcho>;
-    loadHonchoModuleForTest: (deps?: HonchoSdkLoaderDeps) => Promise<unknown>;
     normalizeId: (value: string) => string;
-    resolveHonchoCtor: (sdk: unknown) => HonchoSdkModule["Honcho"];
     sessionPeerAdditions: (topology: PeerTopology) => (readonly [string, {
         observeMe: boolean;
         observeOthers: boolean;
