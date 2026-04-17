@@ -16473,6 +16473,15 @@ var createSessionState = () => ({
   lastPromptRefreshAt: null,
   lastTopicKey: null
 });
+var markAssistantMessageCaptured = async (state, update, persist) => {
+  if (!update || state.capturedAssistantMessageIds.has(update.messageId)) {
+    return false;
+  }
+  await persist();
+  state.capturedAssistantMessageIds.add(update.messageId);
+  state.assistantMessageParts.delete(update.messageId);
+  return true;
+};
 var appendConclusion = (state, content) => {
   state.recentConclusions.unshift(content);
   if (state.recentConclusions.length > MAX_RECENT_CONCLUSIONS) {
@@ -16568,17 +16577,16 @@ var createHonchoRuntimePlugin = ({ configPath } = {}) => async (pluginInput) => 
   };
   const captureCompletedAssistantRecord = async (runtime, state, payload, source) => {
     const update = extractCompletedAssistantMessage(payload, state.assistantMessageParts);
-    if (!update || state.capturedAssistantMessageIds.has(update.messageId)) {
+    if (!update) {
       return false;
     }
-    state.capturedAssistantMessageIds.add(update.messageId);
-    await captureMessage(runtime, runtime.agentPeer, update.text, {
-      source,
-      sessionId: runtime.sessionId,
-      messageId: update.messageId
-    }, update.createdAt);
-    state.assistantMessageParts.delete(update.messageId);
-    return true;
+    return markAssistantMessageCaptured(state, update, async () => {
+      await captureMessage(runtime, runtime.agentPeer, update.text, {
+        source,
+        sessionId: runtime.sessionId,
+        messageId: update.messageId
+      }, update.createdAt);
+    });
   };
   const hydrateSessionStartContext = async (runtime, state) => {
     const dialecticEnabled = runtime.config.contextRefresh.useSessionStartDialectic;
@@ -17010,11 +17018,13 @@ ${state.lastInjectedContext}` : "Last injected memory: none",
 };
 var HonchoRuntimePlugin = createHonchoRuntimePlugin();
 var __testing = {
+  createSessionState,
   extractCompletedAssistantMessage,
   honchoSdkImportPath: "@honcho-ai/sdk",
   buildPeerTopology,
   defaultSettings: DEFAULT_SETTINGS,
   deriveSessionScope,
+  markAssistantMessageCaptured,
   timestampToIso,
   upsertAssistantMessagePart,
   extractSessionId,

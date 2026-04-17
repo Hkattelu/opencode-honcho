@@ -93,3 +93,33 @@ test("extractSessionId reads session id from message.part.updated payloads", () 
     "ses-456",
   )
 })
+
+test("markAssistantMessageCaptured only marks the message after persistence succeeds", async () => {
+  const state = __testing.createSessionState()
+  state.assistantMessageParts.set("msg-123", {
+    sessionID: "ses-123",
+    parts: new Map([["part-visible", "Final reply"]]),
+  })
+
+  let attempts = 0
+  await assert.rejects(
+    __testing.markAssistantMessageCaptured(state, { messageId: "msg-123" }, async () => {
+      attempts += 1
+      throw new Error("transient write failure")
+    }),
+    /transient write failure/,
+  )
+
+  assert.equal(attempts, 1)
+  assert.equal(state.capturedAssistantMessageIds.has("msg-123"), false)
+  assert.equal(state.assistantMessageParts.has("msg-123"), true)
+
+  const captured = await __testing.markAssistantMessageCaptured(state, { messageId: "msg-123" }, async () => {
+    attempts += 1
+  })
+
+  assert.equal(captured, true)
+  assert.equal(attempts, 2)
+  assert.equal(state.capturedAssistantMessageIds.has("msg-123"), true)
+  assert.equal(state.assistantMessageParts.has("msg-123"), false)
+})

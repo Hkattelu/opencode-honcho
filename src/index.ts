@@ -1115,12 +1115,27 @@ const createSessionState = (): SessionState => ({
   lastInjectedContext: null,
   recentConclusions: [],
   conclusionFingerprints: new Set<string>(),
-      capturedAssistantMessageIds: new Set<string>(),
-      assistantMessageParts: new Map<string, { sessionID: string; parts: Map<string, string> }>(),
-      promptCount: 0,
-      lastPromptRefreshAt: null,
-      lastTopicKey: null,
+  capturedAssistantMessageIds: new Set<string>(),
+  assistantMessageParts: new Map<string, { sessionID: string; parts: Map<string, string> }>(),
+  promptCount: 0,
+  lastPromptRefreshAt: null,
+  lastTopicKey: null,
 })
+
+const markAssistantMessageCaptured = async (
+  state: SessionState,
+  update: { messageId: string } | null,
+  persist: () => Promise<void>,
+) => {
+  if (!update || state.capturedAssistantMessageIds.has(update.messageId)) {
+    return false
+  }
+
+  await persist()
+  state.capturedAssistantMessageIds.add(update.messageId)
+  state.assistantMessageParts.delete(update.messageId)
+  return true
+}
 
 type SearchToolResult =
   | {
@@ -1283,18 +1298,22 @@ export const createHonchoRuntimePlugin =
       source: string,
     ) => {
       const update = extractCompletedAssistantMessage(payload, state.assistantMessageParts)
-      if (!update || state.capturedAssistantMessageIds.has(update.messageId)) {
+      if (!update) {
         return false
       }
-
-      state.capturedAssistantMessageIds.add(update.messageId)
-      await captureMessage(runtime, runtime.agentPeer, update.text, {
-        source,
-        sessionId: runtime.sessionId,
-        messageId: update.messageId,
-      }, update.createdAt)
-      state.assistantMessageParts.delete(update.messageId)
-      return true
+      return markAssistantMessageCaptured(state, update, async () => {
+        await captureMessage(
+          runtime,
+          runtime.agentPeer,
+          update.text,
+          {
+            source,
+            sessionId: runtime.sessionId,
+            messageId: update.messageId,
+          },
+          update.createdAt,
+        )
+      })
     }
 
     const hydrateSessionStartContext = async (runtime: ActiveRuntime, state: SessionState) => {
@@ -1825,11 +1844,13 @@ export const createHonchoRuntimePlugin =
 
 export const HonchoRuntimePlugin = createHonchoRuntimePlugin()
 export const __testing = {
+  createSessionState,
   extractCompletedAssistantMessage,
   honchoSdkImportPath: "@honcho-ai/sdk",
   buildPeerTopology,
   defaultSettings: DEFAULT_SETTINGS,
   deriveSessionScope,
+  markAssistantMessageCaptured,
   timestampToIso,
   upsertAssistantMessagePart,
   extractSessionId,

@@ -48,6 +48,21 @@ type RuntimeHandle = {
     childAgentPeerId: string | null;
     parentAgentObserverPeerId: string | null;
 };
+type SessionState = {
+    stableContext: string | null;
+    cachedPromptContext: string | null;
+    lastInjectedContext: string | null;
+    recentConclusions: string[];
+    conclusionFingerprints: Set<string>;
+    capturedAssistantMessageIds: Set<string>;
+    assistantMessageParts: Map<string, {
+        sessionID: string;
+        parts: Map<string, string>;
+    }>;
+    promptCount: number;
+    lastPromptRefreshAt: number | null;
+    lastTopicKey: string | null;
+};
 type PeerDescription = {
     id: string;
     observeMe: boolean;
@@ -70,6 +85,7 @@ type PeerTopology = {
 export declare const createHonchoRuntimePlugin: ({ configPath }?: RuntimePluginOptions) => Plugin;
 export declare const HonchoRuntimePlugin: Plugin;
 export declare const __testing: {
+    createSessionState: () => SessionState;
     extractCompletedAssistantMessage: (payload: unknown, state: Map<string, {
         sessionID: string;
         parts: Map<string, string>;
@@ -90,6 +106,9 @@ export declare const __testing: {
         currentDirectory: string;
         sessionId: string;
     }) => Promise<string>;
+    markAssistantMessageCaptured: (state: SessionState, update: {
+        messageId: string;
+    } | null, persist: () => Promise<void>) => Promise<boolean>;
     timestampToIso: (value: unknown) => string | undefined;
     upsertAssistantMessagePart: (state: Map<string, {
         sessionID: string;
