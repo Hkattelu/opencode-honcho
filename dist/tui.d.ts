@@ -1,13 +1,24 @@
 import type { TuiPluginModule } from "@opencode-ai/plugin/tui";
 type GlobalSettings = {
-    honchoApiKey?: string;
     apiKey?: string;
-    baseUrl?: string;
+    peerName?: string;
     hosts?: {
         opencode?: {
+            enabled?: boolean;
+            baseUrl?: string;
             workspace?: string;
             aiPeer?: string;
-            linkedHosts?: string[];
+            globalOverride?: boolean;
+            recallMode?: "hybrid" | "context" | "tools";
+            observation?: "directional" | "unified";
+            peerModel?: "classic" | "hierarchical";
+            writeFrequency?: "async" | "turn" | "session" | number;
+            sessionStrategy?: "per-repo" | "per-directory" | "per-session" | "global" | "git-branch" | "chat-instance";
+            dialecticReasoningLevel?: "minimal" | "low" | "medium" | "high" | "max";
+            dialecticDynamic?: boolean;
+            dialecticMaxChars?: number;
+            messageMaxChars?: number;
+            saveMessages?: boolean;
         };
     };
 };

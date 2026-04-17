@@ -11,8 +11,12 @@ test("tui exports testing helpers for cloud api key validation", () => {
 
 test("status message still reports cloud mode without a key as not configured", () => {
   const message = __testing.statusMessage({
-    baseUrl: "https://api.honcho.dev",
-    honchoApiKey: "",
+    apiKey: "",
+    hosts: {
+      opencode: {
+        baseUrl: "https://api.honcho.dev",
+      },
+    },
   })
 
   assert.match(message, /Configured: no/)

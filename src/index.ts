@@ -18,12 +18,6 @@ type ContextRefreshSettings = {
   useSessionStartDialectic: boolean
 }
 
-type HostScopedSettings = {
-  workspace: string
-  aiPeer: string
-  linkedHosts: string[]
-}
-
 export type RuntimePluginOptions = {
   configPath?: string
 }
@@ -36,7 +30,6 @@ type HonchoSettings = {
   aiPeer: string
   workspace: string
   globalOverride: boolean
-  linkedHosts: string[]
   recallMode: RecallMode
   observation: ObservationMode
   peerModel: PeerModel
@@ -49,6 +42,8 @@ type HonchoSettings = {
   saveMessages: boolean
   contextRefresh: ContextRefreshSettings
 }
+
+type HostScopedSettings = Partial<Omit<HonchoSettings, "apiKey" | "peerName">>
 
 type RuntimeHandle = {
   rootDir: string
@@ -113,8 +108,10 @@ type PeerTopology = {
 
 const SETTINGS_FILE_NAME = "honcho.json"
 const SETTINGS_DIR_NAME = ".opencode"
-const GLOBAL_SETTINGS_DIR_NAME = "opencode"
-const GLOBAL_SETTINGS_FILE_PATH = "honcho.json"
+const SHARED_SETTINGS_DIR_NAME = ".honcho"
+const SHARED_SETTINGS_FILE_NAME = "config.json"
+const LEGACY_GLOBAL_SETTINGS_DIR_NAME = "opencode"
+const LEGACY_GLOBAL_SETTINGS_FILE_NAME = "honcho.json"
 const PERSISTED_API_KEY_FIELD = "honchoApiKey"
 const LEGACY_API_KEY_FIELD = "apiKey"
 const RUNTIME_SERVICE = "opencode-honcho"
@@ -128,7 +125,6 @@ const DEFAULT_SETTINGS: HonchoSettings = {
   aiPeer: "",
   workspace: "",
   globalOverride: false,
-  linkedHosts: [],
   recallMode: "hybrid",
   observation: "directional",
   peerModel: "classic",
@@ -177,7 +173,6 @@ const TOP_LEVEL_SETTING_FIELDS = new Set<keyof HonchoSettings>([
   "aiPeer",
   "workspace",
   "globalOverride",
-  "linkedHosts",
   "recallMode",
   "observation",
   "peerModel",
@@ -390,12 +385,6 @@ const coerceNumber = (value: unknown) => {
 }
 
 const parseSettingValue = (fieldPath: string, raw: string): unknown => {
-  if (fieldPath === "linkedHosts") {
-    return raw
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean)
-  }
   if (fieldPath === "writeFrequency") {
     if (/^\d+$/.test(raw.trim())) {
       return Number(raw)
@@ -462,6 +451,9 @@ const applyRawLayer = (target: HonchoSettings, raw: Record<string, unknown>) => 
       }
       continue
     }
+    if (!TOP_LEVEL_SETTING_FIELDS.has(key)) {
+      continue
+    }
     if (value === undefined || value === null) {
       continue
     }
@@ -473,10 +465,6 @@ const applyRawLayer = (target: HonchoSettings, raw: Record<string, unknown>) => 
       ;(target as Record<string, unknown>)[key] = expanded
       continue
     }
-    if (key === "linkedHosts" && Array.isArray(value)) {
-      target.linkedHosts = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      continue
-    }
     ;(target as Record<string, unknown>)[key] = value
   }
 }
@@ -485,14 +473,12 @@ const hostScopedSettings = (value: unknown): HostScopedSettings | null => {
   if (!isRecord(value)) {
     return null
   }
-  const linkedHosts = Array.isArray(value.linkedHosts)
-    ? value.linkedHosts.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-    : []
-  return {
-    workspace: typeof value.workspace === "string" ? value.workspace : "",
-    aiPeer: typeof value.aiPeer === "string" ? value.aiPeer : "",
-    linkedHosts,
-  }
+  const normalized = normalizedRawSettings(value)
+  delete normalized[PERSISTED_API_KEY_FIELD]
+  delete normalized[LEGACY_API_KEY_FIELD]
+  delete normalized.peerName
+  delete normalized.linkedHosts
+  return normalized as HostScopedSettings
 }
 
 const normalizeScopedSettings = (raw: Record<string, unknown>, hostId = "opencode") => {
@@ -501,17 +487,17 @@ const normalizeScopedSettings = (raw: Record<string, unknown>, hostId = "opencod
   const topLevelWorkspace = typeof raw.workspace === "string" ? raw.workspace : ""
   const hostBlock = isRecord(raw.hosts) ? hostScopedSettings(raw.hosts[hostId]) : null
 
-  if (globalOverride && topLevelWorkspace.trim()) {
-    normalized.workspace = topLevelWorkspace
-  } else if (hostBlock?.workspace.trim()) {
-    normalized.workspace = hostBlock.workspace
+  if (hostBlock) {
+    for (const [key, value] of Object.entries(hostBlock)) {
+      if (value === undefined || value === null) {
+        continue
+      }
+      normalized[key] = value
+    }
   }
 
-  if (hostBlock?.aiPeer.trim()) {
-    normalized.aiPeer = hostBlock.aiPeer
-  }
-  if (hostBlock && hostBlock.linkedHosts.length > 0) {
-    normalized.linkedHosts = hostBlock.linkedHosts
+  if (globalOverride && topLevelWorkspace.trim()) {
+    normalized.workspace = topLevelWorkspace
   }
   return normalized
 }
@@ -700,24 +686,32 @@ const deriveProjectRoot = (
 const configFileForRoot = (rootDir: string, configPathOverride?: string) =>
   configPathOverride ? path.resolve(configPathOverride) : path.join(rootDir, SETTINGS_DIR_NAME, SETTINGS_FILE_NAME)
 
-const globalSettingsPath = () => {
+const userHomeDir = () => process.env.HOME || process.env.USERPROFILE || process.cwd()
+
+const sharedGlobalSettingsPath = () => {
+  return path.join(userHomeDir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME)
+}
+
+const legacyGlobalSettingsPath = () => {
   const configRoot =
     process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim()
       ? path.resolve(process.env.XDG_CONFIG_HOME)
-      : path.join(process.env.HOME || process.env.USERPROFILE || process.cwd(), ".config")
-  return path.join(configRoot, GLOBAL_SETTINGS_DIR_NAME, GLOBAL_SETTINGS_FILE_PATH)
+      : path.join(userHomeDir(), ".config")
+  return path.join(configRoot, LEGACY_GLOBAL_SETTINGS_DIR_NAME, LEGACY_GLOBAL_SETTINGS_FILE_NAME)
 }
 
-const readConfigFile = async (configPath: string) => {
+const readJsonFile = async (configPath: string) => {
   try {
-    return normalizedRawSettings(JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>)
+    return JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
-      return {}
+      return null
     }
     throw error
   }
 }
+
+const readConfigFile = async (configPath: string) => normalizedRawSettings((await readJsonFile(configPath)) ?? {})
 
 const envSettings = (): Record<string, unknown> => ({
   apiKey: process.env.HONCHO_API_KEY || "",
@@ -729,8 +723,7 @@ const envSettings = (): Record<string, unknown> => ({
 
 const resolveSettings = async (rootDir: string, configPathOverride?: string) => {
   const configPath = configFileForRoot(rootDir, configPathOverride)
-  const globalConfigPath = globalSettingsPath()
-  const [globalRaw, projectRaw] = await Promise.all([readConfigFile(globalConfigPath), readConfigFile(configPath)])
+  const [{ globalConfigPath, globalRaw }, projectRaw] = await Promise.all([ensureSharedGlobalSettings(), readConfigFile(configPath)])
   return {
     configPath,
     globalConfigPath,
@@ -747,6 +740,91 @@ const writeSettings = async (
 }
 
 const currentUserName = () => process.env.USER || process.env.LOGNAME || "user"
+
+const rootApiKey = (raw: Record<string, unknown>) => {
+  const persistedApiKey = typeof raw[PERSISTED_API_KEY_FIELD] === "string" ? expandEnv(raw[PERSISTED_API_KEY_FIELD] as string) : ""
+  const legacyApiKey = typeof raw[LEGACY_API_KEY_FIELD] === "string" ? expandEnv(raw[LEGACY_API_KEY_FIELD] as string) : ""
+  return persistedApiKey || legacyApiKey
+}
+
+const hostDefaults = (settings: HonchoSettings): Record<string, unknown> => {
+  const workspace = typeof settings.workspace === "string" && settings.workspace.trim() ? settings.workspace : "opencode"
+  const aiPeer = typeof settings.aiPeer === "string" && settings.aiPeer.trim() ? settings.aiPeer : "opencode"
+  const host: Record<string, unknown> = {
+    enabled: settings.enabled,
+    baseUrl: settings.baseUrl,
+    aiPeer,
+    workspace,
+    globalOverride: settings.globalOverride,
+    recallMode: settings.recallMode,
+    observation: settings.observation,
+    peerModel: settings.peerModel,
+    writeFrequency: settings.writeFrequency,
+    sessionStrategy: settings.sessionStrategy,
+    dialecticReasoningLevel: settings.dialecticReasoningLevel,
+    dialecticDynamic: settings.dialecticDynamic,
+    dialecticMaxChars: settings.dialecticMaxChars,
+    messageMaxChars: settings.messageMaxChars,
+    saveMessages: settings.saveMessages,
+  }
+  const refresh = settings.contextRefresh
+  const hasCustomRefresh =
+    refresh.messageThreshold !== DEFAULT_SETTINGS.contextRefresh.messageThreshold ||
+    refresh.ttlSeconds !== DEFAULT_SETTINGS.contextRefresh.ttlSeconds ||
+    refresh.skipTrivialPrompts !== DEFAULT_SETTINGS.contextRefresh.skipTrivialPrompts ||
+    refresh.useSessionStartDialectic !== DEFAULT_SETTINGS.contextRefresh.useSessionStartDialectic
+  if (hasCustomRefresh) {
+    host.contextRefresh = refresh
+  }
+  return host
+}
+
+const writeSharedGlobalSettings = async (configPath: string, settings: Record<string, unknown>) => {
+  const next = { ...settings }
+  const apiKey = rootApiKey(next)
+  if (apiKey) {
+    next[LEGACY_API_KEY_FIELD] = apiKey
+  } else {
+    delete next[LEGACY_API_KEY_FIELD]
+  }
+  delete next[PERSISTED_API_KEY_FIELD]
+  await mkdir(path.dirname(configPath), { recursive: true })
+  await writeFile(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf-8")
+}
+
+const ensureSharedGlobalSettings = async () => {
+  const globalConfigPath = sharedGlobalSettingsPath()
+  const legacyConfigPath = legacyGlobalSettingsPath()
+  const [sharedRaw, legacyRaw] = await Promise.all([readJsonFile(globalConfigPath), readJsonFile(legacyConfigPath)])
+  const currentShared = sharedRaw ?? {}
+  const currentLegacy = legacyRaw ?? {}
+  const sharedResolved = normalizeScopedSettings(currentShared)
+  const legacyResolved = normalizeScopedSettings(currentLegacy)
+  const mergedHostSettings = mergeSettings(sharedResolved, legacyResolved)
+  const next: Record<string, unknown> = { ...currentShared }
+  const nextHosts = isRecord(next.hosts) ? { ...next.hosts } : {}
+  const existingPeerName = typeof next.peerName === "string" ? next.peerName.trim() : ""
+  const existingApiKey = rootApiKey(currentShared)
+  const legacyApiKey = rootApiKey(currentLegacy)
+
+  next.peerName = existingPeerName || currentUserName()
+  if (existingApiKey || legacyApiKey) {
+    next[LEGACY_API_KEY_FIELD] = existingApiKey || legacyApiKey
+  } else {
+    delete next[LEGACY_API_KEY_FIELD]
+  }
+  nextHosts.opencode = hostDefaults(mergedHostSettings)
+  next.hosts = nextHosts
+
+  if (JSON.stringify(currentShared, null, 2) !== JSON.stringify(next, null, 2)) {
+    await writeSharedGlobalSettings(globalConfigPath, next)
+  }
+
+  return {
+    globalConfigPath,
+    globalRaw: normalizedRawSettings(next),
+  }
+}
 
 const deriveAgentLabel = (input: Record<string, unknown> | undefined, pluginInput: PluginInput) => {
   const candidates = [
@@ -1171,7 +1249,6 @@ export const createHonchoRuntimePlugin =
         observation: handle.config.observation,
         sessionStrategy: handle.config.sessionStrategy,
         globalOverride: handle.config.globalOverride,
-        linkedHosts: handle.config.linkedHosts,
         saveMessages: handle.config.saveMessages,
         contextRefresh: handle.config.contextRefresh,
         peerModel: handle.config.peerModel,
@@ -1505,26 +1582,21 @@ export const createHonchoRuntimePlugin =
         }),
         honcho_setup: tool({
           description:
-            "Validate Honcho setup for OpenCode and persist shared Honcho credentials or a localhost baseUrl to ~/.config/opencode/honcho.json for all future projects when provided.",
+            "Validate Honcho setup for OpenCode and persist shared Honcho credentials or a localhost baseUrl to ~/.honcho/config.json under hosts.opencode for all future projects when provided.",
           args: {
             apiKey: tool.schema.string().optional(),
             baseUrl: tool.schema.string().optional(),
             persistGlobal: tool.schema.boolean().optional(),
           },
           async execute(args, context) {
-            let resolvedGlobalConfigPath = globalSettingsPath()
+            let resolvedGlobalConfigPath = sharedGlobalSettingsPath()
             try {
               const handle = await deriveRuntimeHandle(pluginInput, { sessionID: context.sessionID }, configPath)
               resolvedGlobalConfigPath = handle.globalConfigPath
               const shouldPersistGlobal = args.persistGlobal !== false
-              const globalPersisted = await readConfigFile(handle.globalConfigPath)
+              const globalPersisted = (await readJsonFile(handle.globalConfigPath)) ?? {}
               const nextGlobal = { ...globalPersisted }
               const nextHosts = isRecord(nextGlobal.hosts) ? { ...nextGlobal.hosts } : {}
-              const nextHostEntry = hostScopedSettings(nextHosts.opencode) ?? {
-                workspace: "opencode",
-                aiPeer: "opencode",
-                linkedHosts: [],
-              }
               const providedApiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : ""
               const providedBaseUrl = typeof args.baseUrl === "string" ? args.baseUrl.trim() : ""
               const effectiveApiKey = providedApiKey || handle.config.apiKey || ""
@@ -1533,22 +1605,29 @@ export const createHonchoRuntimePlugin =
               const persistedFields: string[] = []
 
               if (shouldPersistGlobal) {
-                nextGlobal.globalOverride = nextGlobal.globalOverride === true
                 if (effectiveApiKey) {
-                  setSettingValue(nextGlobal, "apiKey", effectiveApiKey)
-                  persistedFields.push(PERSISTED_API_KEY_FIELD)
+                  nextGlobal[LEGACY_API_KEY_FIELD] = effectiveApiKey
+                  persistedFields.push(LEGACY_API_KEY_FIELD)
                 }
-                if (effectiveBaseUrl && (providedBaseUrl || providedApiKey)) {
-                  setSettingValue(nextGlobal, "baseUrl", effectiveBaseUrl)
-                  persistedFields.push("baseUrl")
+                const nextPeerName = typeof nextGlobal.peerName === "string" && nextGlobal.peerName.trim()
+                  ? nextGlobal.peerName.trim()
+                  : currentUserName()
+                nextGlobal.peerName = nextPeerName
+                if (!persistedFields.includes("peerName")) {
+                  persistedFields.push("peerName")
                 }
-                nextHosts.opencode = nextHostEntry
+                const nextResolved = mergeSettings(
+                  normalizeScopedSettings(globalPersisted),
+                  {
+                    baseUrl: effectiveBaseUrl,
+                  },
+                )
+                nextHosts.opencode = hostDefaults(nextResolved)
                 nextGlobal.hosts = nextHosts
-                if (persistedFields.length > 0) {
-                  await writeSettings(handle.globalConfigPath, nextGlobal)
-                } else if (!isRecord(globalPersisted.hosts) || !isRecord(globalPersisted.hosts.opencode)) {
-                  await writeSettings(handle.globalConfigPath, nextGlobal)
+                if (providedBaseUrl || providedApiKey) {
+                  persistedFields.push("hosts.opencode.baseUrl")
                 }
+                await writeSharedGlobalSettings(handle.globalConfigPath, nextGlobal)
               }
 
               const configured = Boolean(effectiveApiKey) || isLocalBaseUrl(effectiveBaseUrl)

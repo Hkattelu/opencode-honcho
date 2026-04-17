@@ -22,7 +22,6 @@ type HonchoSettings = {
     aiPeer: string;
     workspace: string;
     globalOverride: boolean;
-    linkedHosts: string[];
     recallMode: RecallMode;
     observation: ObservationMode;
     peerModel: PeerModel;

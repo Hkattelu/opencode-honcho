@@ -62,42 +62,32 @@ The installer:
 
 OpenCode Honcho configuration lives in:
 
-- global config: `~/.config/opencode/honcho.json`
+- shared global config: `~/.honcho/config.json`
 - optional project override: `.opencode/honcho.json`
 
-The global config is the normal place to start. Project config is only needed when a specific repo should behave differently.
+The shared global config is the normal place to start. OpenCode stores its defaults under `hosts.opencode`. Project config is only needed when a specific repo should behave differently.
 
 ```jsonc
 {
-  "enabled": true,
-  "honchoApiKey": "hch-...",
-  "baseUrl": "https://api.honcho.dev",
-  "peerName": "",
-  "aiPeer": "",
-  "workspace": "",
-  "globalOverride": false,
-  "linkedHosts": [],
-  "recallMode": "hybrid",
-  "observation": "directional",
-  "peerModel": "classic",
-  "writeFrequency": "async",
-  "sessionStrategy": "per-directory",
-  "dialecticReasoningLevel": "low",
-  "dialecticDynamic": true,
-  "dialecticMaxChars": 600,
-  "messageMaxChars": 25000,
-  "saveMessages": true,
-  "contextRefresh": {
-    "messageThreshold": 30,
-    "ttlSeconds": 300,
-    "skipTrivialPrompts": true,
-    "useSessionStartDialectic": true
-  },
+  "apiKey": "hch-...",
+  "peerName": "adavya",
   "hosts": {
     "opencode": {
+      "enabled": true,
+      "baseUrl": "https://api.honcho.dev",
       "workspace": "opencode",
       "aiPeer": "opencode",
-      "linkedHosts": []
+      "globalOverride": false,
+      "recallMode": "hybrid",
+      "observation": "directional",
+      "peerModel": "classic",
+      "writeFrequency": "async",
+      "sessionStrategy": "per-directory",
+      "dialecticReasoningLevel": "low",
+      "dialecticDynamic": true,
+      "dialecticMaxChars": 600,
+      "messageMaxChars": 25000,
+      "saveMessages": true
     }
   }
 }
@@ -107,13 +97,13 @@ The global config is the normal place to start. Project config is only needed wh
 
 For Honcho Cloud:
 
-- `honchoApiKey` is required
+- `apiKey` is required
 - `baseUrl` should remain `https://api.honcho.dev`
 
 For self-hosted or local Honcho:
 
 - `baseUrl` should point to your deployment, for example `http://127.0.0.1:8000`
-- `honchoApiKey` is required only if that deployment requires authentication
+- `apiKey` is required only if that deployment requires authentication
 
 If OpenCode is running in Docker or another remote environment, `localhost` may not refer to your machine. The configured `baseUrl` must be reachable from the OpenCode host runtime.
 

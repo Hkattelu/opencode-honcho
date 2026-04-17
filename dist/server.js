@@ -15543,8 +15543,10 @@ import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 var SETTINGS_FILE_NAME = "honcho.json";
 var SETTINGS_DIR_NAME = ".opencode";
-var GLOBAL_SETTINGS_DIR_NAME = "opencode";
-var GLOBAL_SETTINGS_FILE_PATH = "honcho.json";
+var SHARED_SETTINGS_DIR_NAME = ".honcho";
+var SHARED_SETTINGS_FILE_NAME = "config.json";
+var LEGACY_GLOBAL_SETTINGS_DIR_NAME = "opencode";
+var LEGACY_GLOBAL_SETTINGS_FILE_NAME = "honcho.json";
 var PERSISTED_API_KEY_FIELD = "honchoApiKey";
 var LEGACY_API_KEY_FIELD = "apiKey";
 var RUNTIME_SERVICE = "opencode-honcho";
@@ -15557,7 +15559,6 @@ var DEFAULT_SETTINGS = {
   aiPeer: "",
   workspace: "",
   globalOverride: false,
-  linkedHosts: [],
   recallMode: "hybrid",
   observation: "directional",
   peerModel: "classic",
@@ -15601,7 +15602,6 @@ var TOP_LEVEL_SETTING_FIELDS = new Set([
   "aiPeer",
   "workspace",
   "globalOverride",
-  "linkedHosts",
   "recallMode",
   "observation",
   "peerModel",
@@ -15778,9 +15778,6 @@ var coerceNumber = (value) => {
   throw new Error(`Expected numeric value, received ${JSON.stringify(value)}`);
 };
 var parseSettingValue = (fieldPath, raw) => {
-  if (fieldPath === "linkedHosts") {
-    return raw.split(",").map((value) => value.trim()).filter(Boolean);
-  }
   if (fieldPath === "writeFrequency") {
     if (/^\d+$/.test(raw.trim())) {
       return Number(raw);
@@ -15823,6 +15820,9 @@ var applyRawLayer = (target, raw) => {
       }
       continue;
     }
+    if (!TOP_LEVEL_SETTING_FIELDS.has(key)) {
+      continue;
+    }
     if (value === undefined || value === null) {
       continue;
     }
@@ -15834,10 +15834,6 @@ var applyRawLayer = (target, raw) => {
       target[key] = expanded;
       continue;
     }
-    if (key === "linkedHosts" && Array.isArray(value)) {
-      target.linkedHosts = value.filter((item) => typeof item === "string" && item.trim().length > 0);
-      continue;
-    }
     target[key] = value;
   }
 };
@@ -15845,28 +15841,28 @@ var hostScopedSettings = (value) => {
   if (!isRecord(value)) {
     return null;
   }
-  const linkedHosts = Array.isArray(value.linkedHosts) ? value.linkedHosts.filter((item) => typeof item === "string" && item.trim().length > 0) : [];
-  return {
-    workspace: typeof value.workspace === "string" ? value.workspace : "",
-    aiPeer: typeof value.aiPeer === "string" ? value.aiPeer : "",
-    linkedHosts
-  };
+  const normalized = normalizedRawSettings(value);
+  delete normalized[PERSISTED_API_KEY_FIELD];
+  delete normalized[LEGACY_API_KEY_FIELD];
+  delete normalized.peerName;
+  delete normalized.linkedHosts;
+  return normalized;
 };
 var normalizeScopedSettings = (raw, hostId = "opencode") => {
   const normalized = normalizedRawSettings(raw);
   const globalOverride = raw.globalOverride === true;
   const topLevelWorkspace = typeof raw.workspace === "string" ? raw.workspace : "";
   const hostBlock = isRecord(raw.hosts) ? hostScopedSettings(raw.hosts[hostId]) : null;
+  if (hostBlock) {
+    for (const [key, value] of Object.entries(hostBlock)) {
+      if (value === undefined || value === null) {
+        continue;
+      }
+      normalized[key] = value;
+    }
+  }
   if (globalOverride && topLevelWorkspace.trim()) {
     normalized.workspace = topLevelWorkspace;
-  } else if (hostBlock?.workspace.trim()) {
-    normalized.workspace = hostBlock.workspace;
-  }
-  if (hostBlock?.aiPeer.trim()) {
-    normalized.aiPeer = hostBlock.aiPeer;
-  }
-  if (hostBlock && hostBlock.linkedHosts.length > 0) {
-    normalized.linkedHosts = hostBlock.linkedHosts;
   }
   return normalized;
 };
@@ -16019,20 +16015,25 @@ var deriveProjectRoot = (pluginInput, configPathOverride) => {
   return path.resolve(pluginInput.directory || pluginInput.worktree || pluginInput.project?.worktree || process.cwd());
 };
 var configFileForRoot = (rootDir, configPathOverride) => configPathOverride ? path.resolve(configPathOverride) : path.join(rootDir, SETTINGS_DIR_NAME, SETTINGS_FILE_NAME);
-var globalSettingsPath = () => {
-  const configRoot = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim() ? path.resolve(process.env.XDG_CONFIG_HOME) : path.join(process.env.HOME || process.env.USERPROFILE || process.cwd(), ".config");
-  return path.join(configRoot, GLOBAL_SETTINGS_DIR_NAME, GLOBAL_SETTINGS_FILE_PATH);
+var userHomeDir = () => process.env.HOME || process.env.USERPROFILE || process.cwd();
+var sharedGlobalSettingsPath = () => {
+  return path.join(userHomeDir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME);
 };
-var readConfigFile = async (configPath) => {
+var legacyGlobalSettingsPath = () => {
+  const configRoot = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim() ? path.resolve(process.env.XDG_CONFIG_HOME) : path.join(userHomeDir(), ".config");
+  return path.join(configRoot, LEGACY_GLOBAL_SETTINGS_DIR_NAME, LEGACY_GLOBAL_SETTINGS_FILE_NAME);
+};
+var readJsonFile = async (configPath) => {
   try {
-    return normalizedRawSettings(JSON.parse(await readFile(configPath, "utf-8")));
+    return JSON.parse(await readFile(configPath, "utf-8"));
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
-      return {};
+      return null;
     }
     throw error;
   }
 };
+var readConfigFile = async (configPath) => normalizedRawSettings(await readJsonFile(configPath) ?? {});
 var envSettings = () => ({
   apiKey: process.env.HONCHO_API_KEY || "",
   baseUrl: process.env.HONCHO_URL || process.env.HONCHO_BASE_URL || "",
@@ -16042,8 +16043,7 @@ var envSettings = () => ({
 });
 var resolveSettings = async (rootDir, configPathOverride) => {
   const configPath = configFileForRoot(rootDir, configPathOverride);
-  const globalConfigPath = globalSettingsPath();
-  const [globalRaw, projectRaw] = await Promise.all([readConfigFile(globalConfigPath), readConfigFile(configPath)]);
+  const [{ globalConfigPath, globalRaw }, projectRaw] = await Promise.all([ensureSharedGlobalSettings(), readConfigFile(configPath)]);
   return {
     configPath,
     globalConfigPath,
@@ -16056,6 +16056,81 @@ var writeSettings = async (configPath, settings) => {
 `, "utf-8");
 };
 var currentUserName = () => process.env.USER || process.env.LOGNAME || "user";
+var rootApiKey = (raw) => {
+  const persistedApiKey = typeof raw[PERSISTED_API_KEY_FIELD] === "string" ? expandEnv(raw[PERSISTED_API_KEY_FIELD]) : "";
+  const legacyApiKey = typeof raw[LEGACY_API_KEY_FIELD] === "string" ? expandEnv(raw[LEGACY_API_KEY_FIELD]) : "";
+  return persistedApiKey || legacyApiKey;
+};
+var hostDefaults = (settings) => {
+  const workspace = typeof settings.workspace === "string" && settings.workspace.trim() ? settings.workspace : "opencode";
+  const aiPeer = typeof settings.aiPeer === "string" && settings.aiPeer.trim() ? settings.aiPeer : "opencode";
+  const host = {
+    enabled: settings.enabled,
+    baseUrl: settings.baseUrl,
+    aiPeer,
+    workspace,
+    globalOverride: settings.globalOverride,
+    recallMode: settings.recallMode,
+    observation: settings.observation,
+    peerModel: settings.peerModel,
+    writeFrequency: settings.writeFrequency,
+    sessionStrategy: settings.sessionStrategy,
+    dialecticReasoningLevel: settings.dialecticReasoningLevel,
+    dialecticDynamic: settings.dialecticDynamic,
+    dialecticMaxChars: settings.dialecticMaxChars,
+    messageMaxChars: settings.messageMaxChars,
+    saveMessages: settings.saveMessages
+  };
+  const refresh = settings.contextRefresh;
+  const hasCustomRefresh = refresh.messageThreshold !== DEFAULT_SETTINGS.contextRefresh.messageThreshold || refresh.ttlSeconds !== DEFAULT_SETTINGS.contextRefresh.ttlSeconds || refresh.skipTrivialPrompts !== DEFAULT_SETTINGS.contextRefresh.skipTrivialPrompts || refresh.useSessionStartDialectic !== DEFAULT_SETTINGS.contextRefresh.useSessionStartDialectic;
+  if (hasCustomRefresh) {
+    host.contextRefresh = refresh;
+  }
+  return host;
+};
+var writeSharedGlobalSettings = async (configPath, settings) => {
+  const next = { ...settings };
+  const apiKey = rootApiKey(next);
+  if (apiKey) {
+    next[LEGACY_API_KEY_FIELD] = apiKey;
+  } else {
+    delete next[LEGACY_API_KEY_FIELD];
+  }
+  delete next[PERSISTED_API_KEY_FIELD];
+  await mkdir(path.dirname(configPath), { recursive: true });
+  await writeFile(configPath, `${JSON.stringify(next, null, 2)}
+`, "utf-8");
+};
+var ensureSharedGlobalSettings = async () => {
+  const globalConfigPath = sharedGlobalSettingsPath();
+  const legacyConfigPath = legacyGlobalSettingsPath();
+  const [sharedRaw, legacyRaw] = await Promise.all([readJsonFile(globalConfigPath), readJsonFile(legacyConfigPath)]);
+  const currentShared = sharedRaw ?? {};
+  const currentLegacy = legacyRaw ?? {};
+  const sharedResolved = normalizeScopedSettings(currentShared);
+  const legacyResolved = normalizeScopedSettings(currentLegacy);
+  const mergedHostSettings = mergeSettings(sharedResolved, legacyResolved);
+  const next = { ...currentShared };
+  const nextHosts = isRecord(next.hosts) ? { ...next.hosts } : {};
+  const existingPeerName = typeof next.peerName === "string" ? next.peerName.trim() : "";
+  const existingApiKey = rootApiKey(currentShared);
+  const legacyApiKey = rootApiKey(currentLegacy);
+  next.peerName = existingPeerName || currentUserName();
+  if (existingApiKey || legacyApiKey) {
+    next[LEGACY_API_KEY_FIELD] = existingApiKey || legacyApiKey;
+  } else {
+    delete next[LEGACY_API_KEY_FIELD];
+  }
+  nextHosts.opencode = hostDefaults(mergedHostSettings);
+  next.hosts = nextHosts;
+  if (JSON.stringify(currentShared, null, 2) !== JSON.stringify(next, null, 2)) {
+    await writeSharedGlobalSettings(globalConfigPath, next);
+  }
+  return {
+    globalConfigPath,
+    globalRaw: normalizedRawSettings(next)
+  };
+};
 var deriveAgentLabel = (input, pluginInput) => {
   const candidates = [
     input?.agentID,
@@ -16374,7 +16449,6 @@ var createHonchoRuntimePlugin = ({ configPath } = {}) => async (pluginInput) => 
       observation: handle.config.observation,
       sessionStrategy: handle.config.sessionStrategy,
       globalOverride: handle.config.globalOverride,
-      linkedHosts: handle.config.linkedHosts,
       saveMessages: handle.config.saveMessages,
       contextRefresh: handle.config.contextRefresh,
       peerModel: handle.config.peerModel,
@@ -16658,48 +16732,45 @@ ${state.lastInjectedContext}` : "Last injected memory: none",
         }
       }),
       honcho_setup: tool({
-        description: "Validate Honcho setup for OpenCode and persist shared Honcho credentials or a localhost baseUrl to ~/.config/opencode/honcho.json for all future projects when provided.",
+        description: "Validate Honcho setup for OpenCode and persist shared Honcho credentials or a localhost baseUrl to ~/.honcho/config.json under hosts.opencode for all future projects when provided.",
         args: {
           apiKey: tool.schema.string().optional(),
           baseUrl: tool.schema.string().optional(),
           persistGlobal: tool.schema.boolean().optional()
         },
         async execute(args, context) {
-          let resolvedGlobalConfigPath = globalSettingsPath();
+          let resolvedGlobalConfigPath = sharedGlobalSettingsPath();
           try {
             const handle = await deriveRuntimeHandle(pluginInput, { sessionID: context.sessionID }, configPath);
             resolvedGlobalConfigPath = handle.globalConfigPath;
             const shouldPersistGlobal = args.persistGlobal !== false;
-            const globalPersisted = await readConfigFile(handle.globalConfigPath);
+            const globalPersisted = await readJsonFile(handle.globalConfigPath) ?? {};
             const nextGlobal = { ...globalPersisted };
             const nextHosts = isRecord(nextGlobal.hosts) ? { ...nextGlobal.hosts } : {};
-            const nextHostEntry = hostScopedSettings(nextHosts.opencode) ?? {
-              workspace: "opencode",
-              aiPeer: "opencode",
-              linkedHosts: []
-            };
             const providedApiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : "";
             const providedBaseUrl = typeof args.baseUrl === "string" ? args.baseUrl.trim() : "";
             const effectiveApiKey = providedApiKey || handle.config.apiKey || "";
             const effectiveBaseUrl = providedBaseUrl || (providedApiKey ? DEFAULT_SETTINGS.baseUrl : handle.config.baseUrl || DEFAULT_SETTINGS.baseUrl);
             const persistedFields = [];
             if (shouldPersistGlobal) {
-              nextGlobal.globalOverride = nextGlobal.globalOverride === true;
               if (effectiveApiKey) {
-                setSettingValue(nextGlobal, "apiKey", effectiveApiKey);
-                persistedFields.push(PERSISTED_API_KEY_FIELD);
+                nextGlobal[LEGACY_API_KEY_FIELD] = effectiveApiKey;
+                persistedFields.push(LEGACY_API_KEY_FIELD);
               }
-              if (effectiveBaseUrl && (providedBaseUrl || providedApiKey)) {
-                setSettingValue(nextGlobal, "baseUrl", effectiveBaseUrl);
-                persistedFields.push("baseUrl");
+              const nextPeerName = typeof nextGlobal.peerName === "string" && nextGlobal.peerName.trim() ? nextGlobal.peerName.trim() : currentUserName();
+              nextGlobal.peerName = nextPeerName;
+              if (!persistedFields.includes("peerName")) {
+                persistedFields.push("peerName");
               }
-              nextHosts.opencode = nextHostEntry;
+              const nextResolved = mergeSettings(normalizeScopedSettings(globalPersisted), {
+                baseUrl: effectiveBaseUrl
+              });
+              nextHosts.opencode = hostDefaults(nextResolved);
               nextGlobal.hosts = nextHosts;
-              if (persistedFields.length > 0) {
-                await writeSettings(handle.globalConfigPath, nextGlobal);
-              } else if (!isRecord(globalPersisted.hosts) || !isRecord(globalPersisted.hosts.opencode)) {
-                await writeSettings(handle.globalConfigPath, nextGlobal);
+              if (providedBaseUrl || providedApiKey) {
+                persistedFields.push("hosts.opencode.baseUrl");
               }
+              await writeSharedGlobalSettings(handle.globalConfigPath, nextGlobal);
             }
             const configured = Boolean(effectiveApiKey) || isLocalBaseUrl(effectiveBaseUrl);
             return JSON.stringify({

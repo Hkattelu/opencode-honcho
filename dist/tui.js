@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 var PACKAGE_ID = "@honcho-ai/opencode-honcho";
 var DEFAULT_BASE_URL = "https://api.honcho.dev";
-var GLOBAL_SETTINGS_DIR_NAME = "opencode";
-var SETTINGS_FILE_NAME = "honcho.json";
-var globalSettingsPath = () => path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), GLOBAL_SETTINGS_DIR_NAME, SETTINGS_FILE_NAME);
+var SHARED_SETTINGS_DIR_NAME = ".honcho";
+var SHARED_SETTINGS_FILE_NAME = "config.json";
+var globalSettingsPath = () => path.join(process.env.HOME || process.env.USERPROFILE || homedir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME);
 var isRecord = (value) => typeof value === "object" && value !== null;
 var isLocalBaseUrl = (value) => {
   if (!value.trim())
@@ -39,8 +39,8 @@ var writeGlobalSettings = async (settings) => {
   return configPath;
 };
 var normalizeSettings = (settings) => ({
-  baseUrl: typeof settings.baseUrl === "string" && settings.baseUrl.trim() ? settings.baseUrl : DEFAULT_BASE_URL,
-  apiKey: typeof settings.honchoApiKey === "string" && settings.honchoApiKey.trim() ? settings.honchoApiKey.trim() : typeof settings.apiKey === "string" ? settings.apiKey.trim() : ""
+  baseUrl: typeof settings.hosts?.opencode?.baseUrl === "string" && settings.hosts.opencode.baseUrl.trim() ? settings.hosts.opencode.baseUrl : DEFAULT_BASE_URL,
+  apiKey: typeof settings.apiKey === "string" && settings.apiKey.trim() ? settings.apiKey.trim() : ""
 });
 var validateCloudApiKey = (value) => value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local.";
 var statusMessage = (settings) => {
@@ -60,22 +60,34 @@ var statusMessage = (settings) => {
 };
 var saveSettings = async (partial) => {
   const current = await readGlobalSettings();
-  const nextApiKey = typeof partial.honchoApiKey === "string" ? partial.honchoApiKey : typeof partial.apiKey === "string" ? partial.apiKey : typeof current.honchoApiKey === "string" ? current.honchoApiKey : typeof current.apiKey === "string" ? current.apiKey : undefined;
+  const nextApiKey = typeof partial.apiKey === "string" ? partial.apiKey : typeof current.apiKey === "string" ? current.apiKey : undefined;
   const next = {
     ...current,
     ...partial,
-    honchoApiKey: nextApiKey,
+    peerName: typeof current.peerName === "string" && current.peerName.trim() ? current.peerName.trim() : process.env.HONCHO_PEER_NAME || process.env.USER || process.env.USERNAME || "user",
+    apiKey: nextApiKey,
     hosts: {
       ...current.hosts,
       opencode: {
+        enabled: current.hosts?.opencode?.enabled ?? true,
+        baseUrl: current.hosts?.opencode?.baseUrl || DEFAULT_BASE_URL,
         workspace: current.hosts?.opencode?.workspace || "opencode",
         aiPeer: current.hosts?.opencode?.aiPeer || "opencode",
-        linkedHosts: current.hosts?.opencode?.linkedHosts || [],
+        globalOverride: current.hosts?.opencode?.globalOverride ?? false,
+        recallMode: current.hosts?.opencode?.recallMode || "hybrid",
+        observation: current.hosts?.opencode?.observation || "directional",
+        peerModel: current.hosts?.opencode?.peerModel || "classic",
+        writeFrequency: current.hosts?.opencode?.writeFrequency || "async",
+        sessionStrategy: current.hosts?.opencode?.sessionStrategy || "per-directory",
+        dialecticReasoningLevel: current.hosts?.opencode?.dialecticReasoningLevel || "low",
+        dialecticDynamic: current.hosts?.opencode?.dialecticDynamic ?? true,
+        dialecticMaxChars: current.hosts?.opencode?.dialecticMaxChars || 600,
+        messageMaxChars: current.hosts?.opencode?.messageMaxChars || 25000,
+        saveMessages: current.hosts?.opencode?.saveMessages ?? true,
         ...partial.hosts?.opencode
       }
     }
   };
-  delete next.apiKey;
   return writeGlobalSettings(next);
 };
 var openStatusDialog = async (api) => {
@@ -91,8 +103,12 @@ var openLocalApiKeyPrompt = (api, baseUrl) => {
     placeholder: "Leave blank for local unauthenticated mode",
     onConfirm: async (apiKey) => {
       const configPath = await saveSettings({
-        baseUrl,
-        honchoApiKey: apiKey.trim()
+        apiKey: apiKey.trim(),
+        hosts: {
+          opencode: {
+            baseUrl
+          }
+        }
       });
       api.ui.dialog.replace(() => api.ui.DialogAlert({
         title: "Honcho configured",
@@ -130,8 +146,12 @@ var openCloudApiKeyPrompt = (api) => {
         return;
       }
       const configPath = await saveSettings({
-        baseUrl: DEFAULT_BASE_URL,
-        honchoApiKey: apiKey.trim()
+        apiKey: apiKey.trim(),
+        hosts: {
+          opencode: {
+            baseUrl: DEFAULT_BASE_URL
+          }
+        }
       });
       api.ui.dialog.replace(() => api.ui.DialogAlert({
         title: "Honcho configured",

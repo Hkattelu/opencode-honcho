@@ -20,7 +20,7 @@ const opencodeCommands = () => ({
   "honcho:setup": {
     description: "Validate Honcho connectivity and repair OpenCode config.",
     template:
-      "Global OpenCode Honcho config lives at `~/.config/opencode/honcho.json`. If the first command argument looks like an Honcho API key, pass it to `honcho_setup` as `apiKey` so it persists globally for all projects. Do not call `honcho_get_config` for setup. Immediately call `honcho_setup` exactly once and summarize the effective OpenCode Honcho status.",
+      "Shared Honcho config lives at `~/.honcho/config.json`, and OpenCode settings live under `hosts.opencode`. If the first command argument looks like an Honcho API key, pass it to `honcho_setup` as `apiKey` so it persists globally for all projects. Do not call `honcho_get_config` for setup. Immediately call `honcho_setup` exactly once and summarize the effective OpenCode Honcho status.",
   },
   "honcho:status": {
     description: "Show Honcho runtime health and current OpenCode memory state.",
@@ -30,7 +30,7 @@ const opencodeCommands = () => ({
   "honcho:settings": {
     description: "Inspect persisted Honcho project settings for OpenCode.",
     template:
-      "Persisted project settings live in `.opencode/honcho.json`, and global OpenCode Honcho config lives at `~/.config/opencode/honcho.json`. Immediately call `honcho_get_config` and summarize the effective values.",
+      "Persisted project settings live in `.opencode/honcho.json`, and shared Honcho config lives at `~/.honcho/config.json` under `hosts.opencode`. Immediately call `honcho_get_config` and summarize the effective values.",
   },
   "honcho:set": {
     description: "Persist a single Honcho setting for all future OpenCode sessions in this project.",
