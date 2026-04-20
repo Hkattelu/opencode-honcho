@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// Keep the published CLI Node-compatible while the repo adopts Bun-first workflows.
+
 import path from "node:path"
 import { spawn } from "node:child_process"
 
@@ -9,7 +11,7 @@ const usage = () => `Usage:
   opencode-honcho install [--plugin-spec <spec>] [--config-dir <dir>] [--force]
 
 Examples:
-  npx @honcho-ai/opencode-honcho install
+  bunx @honcho-ai/opencode-honcho install
 `
 
 const runCommand = (command: string, args: string[], env?: NodeJS.ProcessEnv) =>
