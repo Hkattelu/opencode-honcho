@@ -1,5 +1,4 @@
-import test from "node:test"
-import assert from "node:assert/strict"
+import { expect, test } from "bun:test"
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -15,21 +14,21 @@ test("installGlobalConfig writes plugin and Honcho commands into global opencode
   })
 
   const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf-8"))
-  assert.equal(result.opencodeConfigPath, path.join(configDir, "opencode.json"))
-  assert.equal(config.$schema, "https://opencode.ai/config.json")
-  assert.deepEqual(config.plugin, ["@honcho-ai/opencode-honcho"])
-  assert.ok(config.command["honcho:setup"])
-  assert.ok(config.command["honcho:status"])
-  assert.ok(config.command["honcho:settings"])
-  assert.ok(config.command["honcho:set"])
-  assert.ok(config.command["honcho:unset"])
-  assert.ok(config.command["honcho:mode"])
-  assert.ok(config.command["honcho:write"])
-  assert.ok(config.command["honcho:interview"])
-  assert.match(config.command["honcho:write"].description, /write frequency|write policy/i)
-  assert.match(config.command["honcho:write"].template, /does not create memory/i)
-  assert.match(config.command["honcho:interview"].description, /durable memory/i)
-  assert.match(config.command["honcho:interview"].template, /honcho_create_conclusion/)
+  expect(result.opencodeConfigPath).toBe(path.join(configDir, "opencode.json"))
+  expect(config.$schema).toBe("https://opencode.ai/config.json")
+  expect(config.plugin).toEqual(["@honcho-ai/opencode-honcho"])
+  expect(config.command["honcho:setup"]).toBeTruthy()
+  expect(config.command["honcho:status"]).toBeTruthy()
+  expect(config.command["honcho:settings"]).toBeTruthy()
+  expect(config.command["honcho:set"]).toBeTruthy()
+  expect(config.command["honcho:unset"]).toBeTruthy()
+  expect(config.command["honcho:mode"]).toBeTruthy()
+  expect(config.command["honcho:write"]).toBeTruthy()
+  expect(config.command["honcho:interview"]).toBeTruthy()
+  expect(config.command["honcho:write"].description).toMatch(/write frequency|write policy/i)
+  expect(config.command["honcho:write"].template).toMatch(/does not create memory/i)
+  expect(config.command["honcho:interview"].description).toMatch(/durable memory/i)
+  expect(config.command["honcho:interview"].template).toMatch(/honcho_create_conclusion/)
 })
 
 test("installGlobalConfig preserves existing config and avoids duplicate plugin specs", async () => {
@@ -58,7 +57,7 @@ test("installGlobalConfig preserves existing config and avoids duplicate plugin 
   })
 
   const config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf-8"))
-  assert.deepEqual(config.plugin, ["@honcho-ai/opencode-honcho"])
-  assert.equal(config.command.existing.description, "keep me")
-  assert.ok(config.command["honcho:setup"])
+  expect(config.plugin).toEqual(["@honcho-ai/opencode-honcho"])
+  expect(config.command.existing.description).toBe("keep me")
+  expect(config.command["honcho:setup"]).toBeTruthy()
 })

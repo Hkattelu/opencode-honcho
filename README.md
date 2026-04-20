@@ -17,7 +17,7 @@ Give OpenCode long-term memory that survives context wipes, session restarts, an
 This package installs the Honcho plugin into OpenCode and writes the Honcho command templates into your global OpenCode config.
 
 ```bash
-npx @honcho-ai/opencode-honcho install
+bunx @honcho-ai/opencode-honcho install
 ```
 
 This installer expects the `opencode` CLI to already be installed and available on your `PATH`.
@@ -62,15 +62,23 @@ The installer:
 
 OpenCode Honcho configuration lives in:
 
-- shared global config: `~/.honcho/config.json`
-- optional project override: `.opencode/honcho.json`
+- `~/.honcho/config.json`
 
-The shared global config is the normal place to start. OpenCode stores its defaults under `hosts.opencode`. Project config is only needed when a specific repo should behave differently.
+OpenCode reads and writes this shared config file directly. OpenCode-specific defaults live under `hosts.opencode` in that file.
 
 ```jsonc
 {
   "apiKey": "hch-...",
   "peerName": "adavya",
+  "baseUrl": "https://api.honcho.dev",
+  "workspace": "opencode",
+  "aiPeer": "opencode",
+  "globalOverride": false,
+  "recallMode": "hybrid",
+  "observation": "directional",
+  "peerModel": "classic",
+  "writeFrequency": "async",
+  "sessionStrategy": "per-directory",
   "hosts": {
     "opencode": {
       "enabled": true,
@@ -82,12 +90,7 @@ The shared global config is the normal place to start. OpenCode stores its defau
       "observation": "directional",
       "peerModel": "classic",
       "writeFrequency": "async",
-      "sessionStrategy": "per-directory",
-      "dialecticReasoningLevel": "low",
-      "dialecticDynamic": true,
-      "dialecticMaxChars": 600,
-      "messageMaxChars": 25000,
-      "saveMessages": true
+      "sessionStrategy": "per-directory"
     }
   }
 }
@@ -125,8 +128,8 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project |
 | `/honcho:settings` | Show effective config values and config paths |
-| `/honcho:set` | Persist a config field in `.opencode/honcho.json` |
-| `/honcho:unset` | Reset a project config field back to its default |
+| `/honcho:set` | Persist a config field in `~/.honcho/config.json` |
+| `/honcho:unset` | Reset a shared config field back to its default |
 | `/honcho:mode` | Change `recallMode` |
 | `/honcho:write` | Change `writeFrequency` only. This does not create memory |
 | `/honcho:interview` | Capture durable memory or preferences into Honcho |
@@ -140,7 +143,7 @@ The plugin exposes these tools inside OpenCode:
 | `honcho_setup` | Validate setup and persist shared credentials or endpoint settings |
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
-| `honcho_set_config` | Update a persisted project setting |
+| `honcho_set_config` | Update a persisted shared setting |
 | `honcho_search` | Search Honcho session memory |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
@@ -161,8 +164,8 @@ The plugin uses these OpenCode plugin capabilities:
 ## Development
 
 ```bash
-npm install
-npm run build
-npm test
-npm run check
+bun install
+bun run build
+bun test
+bun run check
 ```
