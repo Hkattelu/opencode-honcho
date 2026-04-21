@@ -128,11 +128,6 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
         peerModel: current.hosts?.opencode?.peerModel || "classic",
         writeFrequency: current.hosts?.opencode?.writeFrequency || "async",
         sessionStrategy: current.hosts?.opencode?.sessionStrategy || "per-directory",
-        dialecticReasoningLevel: current.hosts?.opencode?.dialecticReasoningLevel || "low",
-        dialecticDynamic: current.hosts?.opencode?.dialecticDynamic ?? true,
-        dialecticMaxChars: current.hosts?.opencode?.dialecticMaxChars || 600,
-        messageMaxChars: current.hosts?.opencode?.messageMaxChars || 25000,
-        saveMessages: current.hosts?.opencode?.saveMessages ?? true,
         ...partial.hosts?.opencode,
       },
     },
@@ -306,6 +301,7 @@ const plugin: TuiPluginModule & { id: string } = {
 
 export const __testing = {
   normalizeSettings,
+  saveSettings,
   statusMessage,
   validateCloudApiKey,
 }

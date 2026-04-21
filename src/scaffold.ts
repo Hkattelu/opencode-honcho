@@ -20,7 +20,7 @@ const opencodeCommands = () => ({
   "honcho:setup": {
     description: "Validate Honcho connectivity and repair OpenCode config.",
     template:
-      "Shared Honcho config lives at `~/.honcho/config.json`, and OpenCode settings live under `hosts.opencode`. If the first command argument looks like an Honcho API key, pass it to `honcho_setup` as `apiKey` so it persists globally for all projects. Do not call `honcho_get_config` for setup. Immediately call `honcho_setup` exactly once and summarize the effective OpenCode Honcho status.",
+      "OpenCode Honcho config lives at `~/.honcho/config.json`. If the first command argument looks like an Honcho API key, pass it to `honcho_setup` as `apiKey` so it persists there. Do not call `honcho_get_config` for setup. Immediately call `honcho_setup` exactly once and summarize the effective OpenCode Honcho status.",
   },
   "honcho:status": {
     description: "Show Honcho runtime health and current OpenCode memory state.",
@@ -30,11 +30,11 @@ const opencodeCommands = () => ({
   "honcho:settings": {
     description: "Inspect persisted Honcho project settings for OpenCode.",
     template:
-      "Persisted project settings live in `.opencode/honcho.json`, and shared Honcho config lives at `~/.honcho/config.json` under `hosts.opencode`. Immediately call `honcho_get_config` and summarize the effective values.",
+      "Persisted OpenCode Honcho settings live in `~/.honcho/config.json`. Immediately call `honcho_get_config` and summarize the effective values.",
   },
   "honcho:set": {
     description: "Persist a single Honcho setting for all future OpenCode sessions in this project.",
-    template: "Update `.opencode/honcho.json` by calling `honcho_set_config` exactly once with the requested field and value.",
+    template: "Update `~/.honcho/config.json` by calling `honcho_set_config` exactly once with the requested field and value.",
   },
   "honcho:unset": {
     description: "Reset a persisted Honcho setting back to its default value for this project.",
