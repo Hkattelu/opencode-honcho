@@ -25,6 +25,31 @@ const runCommand = async (command: string, args: string[], env?: Record<string, 
   }
 }
 
+const runOpencodeCommand = async (args: string[], env?: Record<string, string | undefined>) => {
+  if (process.platform === "win32") {
+    await runCommand("cmd.exe", ["/c", "opencode", ...args], env)
+    return
+  }
+
+  const opencodeCommands = ["opencode"]
+  let lastError: unknown = null
+  for (const command of opencodeCommands) {
+    try {
+      await runCommand(command, args, env)
+      return
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      const message = error instanceof Error ? error.message : String(error)
+      if (code === "ENOENT" || /ENOENT/i.test(message)) {
+        lastError = error
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(installPathRecoveryMessage())
+}
+
 const preferredShellRcFile = () => {
   const shell = path.basename(process.env.SHELL || "")
   if (shell === "zsh") return "~/.zshrc"
@@ -81,7 +106,7 @@ const main = async () => {
     const options = parseInstallArgs(rest)
     const env = options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : undefined
     try {
-      await runCommand("opencode", ["plugin", options.pluginSpec, "--global", ...(options.force ? ["--force"] : [])], env)
+      await runOpencodeCommand(["plugin", options.pluginSpec, "--global", ...(options.force ? ["--force"] : [])], env)
     } catch (error) {
       const code = (error as { code?: string }).code
       const message = error instanceof Error ? error.message : ""

@@ -61,3 +61,11 @@ test("help output shows Bun-first install example", async () => {
   expect(result.stdout).toMatch(/bunx @honcho-ai\/opencode-honcho install/)
   expect(result.stderr).toBe("")
 })
+
+test("install command uses cmd.exe wrapper on Windows", async () => {
+  const source = await readFile(path.join(process.cwd(), "src/cli.ts"), "utf-8")
+
+  expect(source).toMatch(/cmd\.exe/)
+  expect(source).toMatch(/\/c", "opencode"/)
+  expect(source).toMatch(/process\.platform === "win32"/)
+})
