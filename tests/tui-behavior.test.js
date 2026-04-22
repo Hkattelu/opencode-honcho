@@ -33,6 +33,66 @@ test("status message reads the root baseUrl", () => {
   assert.match(message, /Base URL: http:\/\/127.0.0.1:8000/)
 })
 
+test("settings message shows config values separately from status messaging", () => {
+  const message = __testing.settingsMessage({
+    apiKey: "key",
+    peerName: "user-name",
+    baseUrl: "https://api.honcho.dev",
+    hosts: {
+      opencode: {
+        workspace: "opencode",
+        aiPeer: "opencode",
+        recallMode: "hybrid",
+        observationMode: "directional",
+        sessionStrategy: "per-directory",
+      },
+    },
+  })
+
+  assert.match(message, /Config path:/)
+  assert.match(message, /Peer name: user-name/)
+  assert.match(message, /Observation mode: directional/)
+})
+
+test("status and settings messages are distinct surfaces", () => {
+  const settings = {
+    apiKey: "key",
+    peerName: "user-name",
+    baseUrl: "https://api.honcho.dev",
+    hosts: {
+      opencode: {
+        workspace: "opencode",
+        aiPeer: "opencode",
+        recallMode: "hybrid",
+        observationMode: "directional",
+        sessionStrategy: "per-directory",
+      },
+    },
+  }
+
+  expect(__testing.statusMessage(settings)).not.toBe(__testing.settingsMessage(settings))
+})
+
+test("native TUI Honcho commands do not register slash aliases", () => {
+  const commands = __testing.buildCommands({})
+  assert.deepEqual(
+    commands.map((command) => command.value),
+    ["honcho.setup", "honcho.status", "honcho.settings"],
+  )
+  assert.equal(commands.every((command) => command.slash === undefined), true)
+})
+
+test("native TUI commands do not register slash aliases", () => {
+  const commands = __testing.buildCommands({})
+
+  expect(commands.map((command) => command.value)).toEqual([
+    "honcho.setup",
+    "honcho.status",
+    "honcho.settings",
+  ])
+  expect(commands.every((command) => command.slash === undefined)).toBe(true)
+})
+
 test("tui saveSettings persists only the final supported root and host fields", async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-clean-fields-"))
   const sharedConfigDir = path.join(homeDir, ".honcho")

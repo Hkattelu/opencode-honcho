@@ -5,4 +5,5 @@
 - Initial standalone OpenCode Honcho plugin runtime package.
 - TypeScript-native OpenCode plugin runtime built on the Honcho TypeScript SDK.
 - Native OpenCode tools, prompt injection, compaction support, and multi-agent peer/session mapping.
-- Global OpenCode Honcho config at `~/.config/opencode/honcho.json` with project-level overrides in `.opencode/honcho.json`.
+- Shared OpenCode Honcho config at `~/.honcho/config.json`.
+- Terminal/TUI surfaces clarify status vs settings, remove obsolete write-frequency controls, and distinguish session-message search from durable conclusion capture.

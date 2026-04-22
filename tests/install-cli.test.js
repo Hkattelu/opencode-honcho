@@ -23,12 +23,12 @@ test("installGlobalConfig writes plugin and Honcho commands into global opencode
   expect(config.command["honcho:set"]).toBeTruthy()
   expect(config.command["honcho:unset"]).toBeTruthy()
   expect(config.command["honcho:mode"]).toBeTruthy()
-  expect(config.command["honcho:write"]).toBeTruthy()
+  expect(config.command["honcho:write"]).toBeUndefined()
   expect(config.command["honcho:interview"]).toBeTruthy()
-  expect(config.command["honcho:write"].description).toMatch(/write frequency|write policy/i)
-  expect(config.command["honcho:write"].template).toMatch(/does not create memory/i)
   expect(config.command["honcho:interview"].description).toMatch(/durable memory/i)
   expect(config.command["honcho:interview"].template).toMatch(/honcho_create_conclusion/)
+  expect(config.command["honcho:status"].description).toMatch(/runtime health/i)
+  expect(config.command["honcho:settings"].description).toMatch(/effective config/i)
 })
 
 test("installGlobalConfig preserves existing config and avoids duplicate plugin specs", async () => {

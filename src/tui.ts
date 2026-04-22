@@ -90,6 +90,21 @@ const statusMessage = (settings: GlobalSettings) => {
   ].join("\n")
 }
 
+const settingsMessage = (settings: GlobalSettings) => {
+  const host = settings.hosts?.opencode || {}
+  return [
+    `Config path: ${globalSettingsPath()}`,
+    `API key: ${settings.apiKey?.trim() ? "set" : "not set"}`,
+    `Peer name: ${settings.peerName?.trim() || "user"}`,
+    `Base URL: ${settings.baseUrl?.trim() || DEFAULT_BASE_URL}`,
+    `Workspace: ${host.workspace || "opencode"}`,
+    `AI peer: ${host.aiPeer || "opencode"}`,
+    `Recall mode: ${host.recallMode || "hybrid"}`,
+    `Observation mode: ${host.observationMode || "directional"}`,
+    `Session strategy: ${host.sessionStrategy || "per-directory"}`,
+  ].join("\n")
+}
+
 const saveSettings = async (partial: Partial<GlobalSettings>) => {
   const current = await readGlobalSettings()
   const partialHost = partial.hosts?.opencode
@@ -134,6 +149,16 @@ const openStatusDialog = async (api: Parameters<TuiPlugin>[0]) => {
     api.ui.DialogAlert({
       title: "Honcho Status",
       message: statusMessage(settings),
+    }),
+  )
+}
+
+const openSettingsDialog = async (api: Parameters<TuiPlugin>[0]) => {
+  const settings = await readGlobalSettings()
+  api.ui.dialog.replace(() =>
+    api.ui.DialogAlert({
+      title: "Honcho Settings",
+      message: settingsMessage(settings),
     }),
   )
 }
@@ -240,43 +265,36 @@ const openSetupDialog = (api: Parameters<TuiPlugin>[0]) => {
   )
 }
 
+const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
+  {
+    title: "Honcho Setup",
+    value: "honcho.setup",
+    description: "Configure Honcho Cloud or local settings for OpenCode",
+    category: "Honcho",
+    onSelect: () => openSetupDialog(api),
+  },
+  {
+    title: "Honcho Status",
+    value: "honcho.status",
+    description: "Show Honcho runtime health for the current OpenCode session",
+    category: "Honcho",
+    onSelect: () => {
+      void openStatusDialog(api)
+    },
+  },
+  {
+    title: "Honcho Settings",
+    value: "honcho.settings",
+    description: "Show effective Honcho config values for OpenCode",
+    category: "Honcho",
+    onSelect: () => {
+      void openSettingsDialog(api)
+    },
+  },
+]
+
 const tui: TuiPlugin = async (api) => {
-  api.command.register(() => [
-    {
-      title: "Honcho Setup",
-      value: "honcho.setup",
-      description: "Configure Honcho Cloud or local settings for OpenCode",
-      category: "Honcho",
-      slash: {
-        name: "honcho:setup",
-      },
-      onSelect: () => openSetupDialog(api),
-    },
-    {
-      title: "Honcho Status",
-      value: "honcho.status",
-      description: "Show Honcho configuration status for OpenCode",
-      category: "Honcho",
-      slash: {
-        name: "honcho:status",
-      },
-      onSelect: () => {
-        void openStatusDialog(api)
-      },
-    },
-    {
-      title: "Honcho Settings",
-      value: "honcho.settings",
-      description: "Show Honcho defaults and config path information",
-      category: "Honcho",
-      slash: {
-        name: "honcho:settings",
-      },
-      onSelect: () => {
-        void openStatusDialog(api)
-      },
-    },
-  ])
+  api.command.register(() => buildCommands(api))
 }
 
 const plugin: TuiPluginModule & { id: string } = {
@@ -285,9 +303,11 @@ const plugin: TuiPluginModule & { id: string } = {
 }
 
 export const __testing = {
+  buildCommands,
   normalizeSettings,
   saveSettings,
   statusMessage,
+  settingsMessage,
   validateCloudApiKey,
 }
 

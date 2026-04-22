@@ -71,25 +71,12 @@ OpenCode reads and writes this shared config file directly. OpenCode-specific de
   "apiKey": "hch-...",
   "peerName": "user-name",
   "baseUrl": "https://api.honcho.dev",
-  "workspace": "opencode",
-  "aiPeer": "opencode",
-  "globalOverride": false,
-  "recallMode": "hybrid",
-  "observation": "directional",
-  "peerModel": "classic",
-  "writeFrequency": "async",
-  "sessionStrategy": "per-directory",
   "hosts": {
     "opencode": {
-      "enabled": true,
-      "baseUrl": "https://api.honcho.dev",
       "workspace": "opencode",
       "aiPeer": "opencode",
-      "globalOverride": false,
       "recallMode": "hybrid",
-      "observation": "directional",
-      "peerModel": "classic",
-      "writeFrequency": "async",
+      "observationMode": "directional",
       "sessionStrategy": "per-directory"
     }
   }
@@ -131,7 +118,6 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 | `/honcho:set` | Persist a config field in `~/.honcho/config.json` |
 | `/honcho:unset` | Reset a shared config field back to its default |
 | `/honcho:mode` | Change `recallMode` |
-| `/honcho:write` | Change `writeFrequency` only. This does not create memory |
 | `/honcho:interview` | Capture durable memory or preferences into Honcho |
 
 ## Agent Tools
@@ -144,7 +130,7 @@ The plugin exposes these tools inside OpenCode:
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting |
-| `honcho_search` | Search Honcho session memory |
+| `honcho_search` | Search Honcho session messages and retrieved context (not durable conclusions) |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
 
