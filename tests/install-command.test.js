@@ -29,13 +29,13 @@ const runCli = async (args, env) => {
 test("source CLI uses the Bun shebang", async () => {
   const source = await readFile(path.join(process.cwd(), "src/cli.ts"), "utf-8")
 
-  expect(source.startsWith("#!/usr/bin/env bun\n")).toBe(true)
+  expect(source).toMatch(/^#!\/usr\/bin\/env bun\r?\n/)
 })
 
 test("built CLI uses the Bun shebang", async () => {
   const built = await readFile(path.join(process.cwd(), "dist/cli.js"), "utf-8")
 
-  expect(built.startsWith("#!/usr/bin/env bun\n")).toBe(true)
+  expect(built).toMatch(/^#!\/usr\/bin\/env bun\r?\n/)
 })
 
 test("install command explains how to recover when opencode is not on PATH", async () => {
