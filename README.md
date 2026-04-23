@@ -17,10 +17,8 @@ Give OpenCode long-term memory that survives context wipes, session restarts, an
 <details>
 <summary>Windows local install</summary>
 
-For the current PR 11 branch:
-
 ```bat
-git clone --branch feat/pr11-final https://github.com/plastic-labs/opencode-honcho.git
+git clone --branch main https://github.com/plastic-labs/opencode-honcho.git
 cd opencode-honcho
 bun install && bun run build && bun .\dist\cli.js install --plugin-spec "%CD%" --force
 ```
@@ -160,7 +158,4 @@ bun ./dist/cli.js install --plugin-spec "$PWD" --force
 ```
 
 That install command wires the current checkout into OpenCode with `--force`, which is the intended local branch-testing flow.
-
-
-
 
