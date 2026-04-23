@@ -161,6 +161,16 @@ test("interview prompt exposes the single-question copy", () => {
   )
 })
 
+test("interview command description is concise", () => {
+  const interviewCommand = __testing.buildCommands({}).find((command) => command.value === "honcho.interview")
+  assert.equal(interviewCommand?.description, "Answer one interview question")
+})
+
+test("interview conclusions are prefixed with peer name", () => {
+  assert.equal(__testing.formatInterviewConclusion("Ada", "I like Python"), "Ada I like Python")
+  assert.equal(__testing.formatInterviewConclusion("", "I like Python"), "user I like Python")
+})
+
 test("tui saveSettings persists only the final supported root and host fields", async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-clean-fields-"))
   const sharedConfigDir = path.join(homeDir, ".honcho")

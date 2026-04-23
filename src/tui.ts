@@ -174,6 +174,11 @@ const normalizeSettings = (settings: GlobalSettings) => ({
 const validateCloudApiKey = (value: string) =>
   value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local."
 
+const formatInterviewConclusion = (peerName: string | undefined, content: string) => {
+  const normalizedPeerName = typeof peerName === "string" && peerName.trim() ? peerName.trim() : "user"
+  return `${normalizedPeerName} ${content.trim()}`
+}
+
 const deriveLiveStatus = (api: Parameters<TuiPlugin>[0], settings: GlobalSettings) => {
   const openCodeSessionId =
     api.route?.current?.name === "session" && typeof api.route.current.params?.sessionID === "string"
@@ -504,6 +509,8 @@ const openInterviewDialog = (api: Parameters<TuiPlugin>[0]) => {
           )
           return
         }
+        const settings = await readGlobalSettings()
+        const formattedContent = formatInterviewConclusion(settings.peerName, content)
         const sessionID =
           api.route?.current?.name === "session" && typeof api.route.current.params?.sessionID === "string"
             ? api.route.current.params.sessionID
@@ -521,7 +528,7 @@ const openInterviewDialog = (api: Parameters<TuiPlugin>[0]) => {
           sessionID,
           directory: api.state?.path?.directory,
           command: "honcho:interview",
-          arguments: content,
+          arguments: formattedContent,
         })
         api.ui.dialog.replace(() =>
           api.ui.DialogAlert({
@@ -613,7 +620,7 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
   {
     title: "Honcho Interview",
     value: "honcho.interview",
-    description: "Answer one interview question and save the response as a conclusion",
+    description: "Answer one interview question",
     category: "Honcho",
     slash: {
       name: "honcho:interview",
@@ -636,6 +643,7 @@ const plugin: TuiPluginModule & { id: string } = {
 export const __testing = {
   buildCommands,
   deriveLiveStatus,
+  formatInterviewConclusion,
   interviewPrompt: INTERVIEW_PROMPT,
   normalizeSettings,
   readSharedConfig,
