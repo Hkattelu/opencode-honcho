@@ -107,13 +107,14 @@ test("honcho_setup writes shared Honcho config with root peerName and hosts.open
     await withEnv({ HOME: homeDir, USER: "adavya", XDG_CONFIG_HOME: undefined }, async () => {
       const hooks = await createPluginHarness(rootDir)
       const honchoSetup = hooks.tool.honcho_setup
-      const result = JSON.parse(await honchoSetup.execute({ apiKey: "new-key" }, toolContext(rootDir)))
+      const result = JSON.parse(await honchoSetup.execute({ apiKey: "new-key", peerName: "Ada" }, toolContext(rootDir)))
       const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
 
       expect(result.ok).toBe(true)
       expect(result.globalConfigPath).toBe(sharedConfigPath)
       expect(result.status.baseUrl).toBe("https://api.honcho.dev")
-      expect(persisted.peerName).toBe("user")
+      expect(result.status.peerName).toBe("Ada")
+      expect(persisted.peerName).toBe("Ada")
       expect(persisted.apiKey).toBe("new-key")
       expect(persisted.honchoApiKey).toBeUndefined()
       expect(persisted.baseUrl).toBe("https://api.honcho.dev")
@@ -133,6 +134,7 @@ test("honcho_setup writes shared Honcho config with root peerName and hosts.open
         sessionStrategy: "per-directory",
       })
       expect("linkedHosts" in persisted.hosts.opencode).toBe(false)
+      expect(result.persistedFields).toContain("peerName")
       expect(result.status.peers.userPeer.observe_me).toBe(true)
       expect(result.status.peers.userPeer.observe_others).toBe(false)
       expect(result.status.peers.userPeer.observeMe).toBeUndefined()
@@ -189,6 +191,9 @@ test("honcho_status reads effective settings from shared hosts.opencode config",
     expect(result.projectConfigPath).toBe(sharedConfigPath)
     expect(result.globalConfigPath).toBe(sharedConfigPath)
     expect(result.workspace).toBe("opencode")
+    expect(result.workspaceName).toBe("opencode")
+    expect(typeof result.sessionName).toBe("string")
+    expect(result.sessionName).toContain("opencode")
     expect(result.peers.userPeer.observe_me).toBe(true)
     expect(result.peers.rootAgentPeer.observe_others).toBe(true)
     expect(result.peers.rootAgentPeer.observeOthers).toBeUndefined()

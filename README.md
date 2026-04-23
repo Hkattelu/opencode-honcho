@@ -29,7 +29,8 @@ If the installer cannot find `opencode`, restart your shell or source your shell
 2. Run `/honcho:setup`
 3. Keep the default `Honcho Cloud` option unless you explicitly want a self-hosted or local endpoint
 4. Enter your Honcho API key
-5. Run `/honcho:status` to verify the runtime
+5. Enter your `peerName`
+6. Run `/honcho:status` to verify the runtime
 
 ### Step 4: (Optional) Kickstart with an Interview
 
@@ -37,7 +38,8 @@ If the installer cannot find `opencode`, restart your shell or source your shell
 /honcho:interview
 ```
 
-This captures durable preferences or stable project context into Honcho memory.
+This opens the three-question Honcho interview flow without saving conclusions automatically.
+If you want to save a durable conclusion immediately, pass direct text to `/honcho:interview ...`.
 
 ## What You Get
 
@@ -112,11 +114,11 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 
 | Command | Description |
 | --- | --- |
-| `/honcho:setup` | First-time setup for cloud or local Honcho |
-| `/honcho:status` | Show effective Honcho status for the current OpenCode project |
+| `/honcho:setup` | First-time setup for cloud or local Honcho, including `peerName` |
+| `/honcho:status` | Show effective Honcho status for the current OpenCode project, including live workspace and session names when available |
 | `/honcho:settings` | Show effective config values and config paths |
-| `/honcho:mode` | Change `recallMode` |
-| `/honcho:interview` | Capture durable memory or preferences into Honcho |
+| `/honcho:mode` | Edit shared Honcho fields in `~/.honcho/config.json` |
+| `/honcho:interview` | Ask the default Honcho interview questions without auto-saving conclusions |
 
 ## Agent Tools
 

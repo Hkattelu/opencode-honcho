@@ -1157,11 +1157,14 @@ export const createHonchoRuntimePlugin =
         globalConfigPath: handle.globalConfigPath,
         rootDir: handle.rootDir,
         workspace: handle.workspaceId,
+        workspaceName: handle.workspaceId,
         sessionId: handle.sessionId,
         sessionKey: handle.sessionKey,
+        sessionName: handle.sessionKey,
         recallMode: handle.config.recallMode,
         observationMode: handle.config.observationMode,
         sessionStrategy: handle.config.sessionStrategy,
+        peerName: handle.config.peerName,
         configured: hasConfiguredAuth(handle.config),
         localMode: isLocalBaseUrl(handle.config.baseUrl),
         baseUrl: handle.config.baseUrl,
@@ -1498,6 +1501,7 @@ export const createHonchoRuntimePlugin =
           args: {
             apiKey: tool.schema.string().optional(),
             baseUrl: tool.schema.string().optional(),
+            peerName: tool.schema.string().optional(),
             persistGlobal: tool.schema.boolean().optional(),
           },
           async execute(args, context) {
@@ -1511,9 +1515,11 @@ export const createHonchoRuntimePlugin =
               const nextHosts = isRecord(nextGlobal.hosts) ? { ...nextGlobal.hosts } : {}
               const providedApiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : ""
               const providedBaseUrl = typeof args.baseUrl === "string" ? args.baseUrl.trim() : ""
+              const providedPeerName = typeof args.peerName === "string" ? args.peerName.trim() : ""
               const effectiveApiKey = providedApiKey || handle.config.apiKey || ""
               const effectiveBaseUrl =
                 providedBaseUrl || (providedApiKey ? DEFAULT_SETTINGS.baseUrl : handle.config.baseUrl || DEFAULT_SETTINGS.baseUrl)
+              const effectivePeerName = providedPeerName || handle.config.peerName || currentUserName()
               const persistedFields: string[] = []
 
               if (!isLocalBaseUrl(effectiveBaseUrl) && effectiveApiKey) {
@@ -1529,10 +1535,7 @@ export const createHonchoRuntimePlugin =
                   nextGlobal[LEGACY_API_KEY_FIELD] = effectiveApiKey
                   persistedFields.push(LEGACY_API_KEY_FIELD)
                 }
-                const nextPeerName = typeof nextGlobal.peerName === "string" && nextGlobal.peerName.trim()
-                  ? nextGlobal.peerName.trim()
-                  : currentUserName()
-                nextGlobal.peerName = nextPeerName
+                nextGlobal.peerName = effectivePeerName
                 if (!persistedFields.includes("peerName")) {
                   persistedFields.push("peerName")
                 }

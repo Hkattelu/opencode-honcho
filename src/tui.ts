@@ -8,6 +8,20 @@ const DEFAULT_BASE_URL = "https://api.honcho.dev"
 const SHARED_SETTINGS_DIR_NAME = ".honcho"
 const SHARED_SETTINGS_FILE_NAME = "config.json"
 
+const SHARED_CONFIG_PRESETS: Record<string, readonly string[]> = {
+  recallmode: ["hybrid", "context", "tools"],
+  observationmode: ["directional", "unified"],
+  peermodel: ["classic", "hierarchical"],
+  sessionstrategy: ["per-repo", "per-directory", "per-session", "global", "git-branch", "chat-instance"],
+  dialecticreasoninglevel: ["minimal", "low", "medium", "high", "max"],
+}
+
+const INTERVIEW_QUESTIONS = [
+  "What are you working on right now?",
+  "Anything specific to remember about you?",
+  "Any goals to remember about you?",
+] as const
+
 type GlobalSettings = {
   apiKey?: string
   peerName?: string
@@ -24,6 +38,9 @@ type GlobalSettings = {
 }
 
 const globalSettingsPath = () =>
+  path.join(process.env.HOME || process.env.USERPROFILE || homedir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME)
+
+const sharedConfigPath = () =>
   path.join(process.env.HOME || process.env.USERPROFILE || homedir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME)
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
@@ -52,6 +69,91 @@ const readGlobalSettings = async (): Promise<GlobalSettings> => {
   }
 }
 
+const readSharedConfig = async (): Promise<Record<string, unknown> | null> => {
+  const configPath = sharedConfigPath()
+  try {
+    const raw = await readFile(configPath, "utf-8")
+    const parsed = JSON.parse(raw)
+    return isRecord(parsed) ? parsed : {}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null
+    }
+    throw error
+  }
+}
+
+const writeSharedConfig = async (settings: Record<string, unknown>) => {
+  const configPath = sharedConfigPath()
+  await mkdir(path.dirname(configPath), { recursive: true })
+  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
+  return configPath
+}
+
+const listSharedConfigFields = (value: Record<string, unknown>, prefix = ""): string[] =>
+  Object.entries(value).flatMap(([key, entryValue]) => {
+    const nextKey = prefix ? `${prefix}.${key}` : key
+    if (isRecord(entryValue) && Object.keys(entryValue).length > 0) {
+      return listSharedConfigFields(entryValue, nextKey)
+    }
+    return [nextKey]
+  })
+
+const getNestedValue = (value: Record<string, unknown>, fieldPath: string): unknown =>
+  fieldPath.split(".").reduce<unknown>((current, part) => {
+    if (!isRecord(current)) return undefined
+    return current[part]
+  }, value)
+
+const setNestedValue = (value: Record<string, unknown>, fieldPath: string, nextValue: unknown) => {
+  const parts = fieldPath.split(".")
+  let current: Record<string, unknown> = value
+  for (const part of parts.slice(0, -1)) {
+    const existing = current[part]
+    if (!isRecord(existing)) {
+      current[part] = {}
+    }
+    current = current[part] as Record<string, unknown>
+  }
+  current[parts.at(-1) as string] = nextValue
+}
+
+const resolveSharedConfigField = (config: Record<string, unknown>, field: string) => {
+  const canonical = listSharedConfigFields(config).find(
+    (candidate) => candidate.toLowerCase() === field.trim().toLowerCase(),
+  )
+  if (!canonical) {
+    throw new Error(`Field '${field}' does not exist in ${sharedConfigPath()}.`)
+  }
+  return canonical
+}
+
+const sharedConfigPresetOptions = (fieldPath: string, currentValue: unknown) => {
+  const presetKey = fieldPath.split(".").at(-1)?.toLowerCase() || fieldPath.toLowerCase()
+  if (SHARED_CONFIG_PRESETS[presetKey]) {
+    return [...SHARED_CONFIG_PRESETS[presetKey]]
+  }
+  if (typeof currentValue === "boolean") {
+    return ["true", "false"]
+  }
+  return []
+}
+
+const parseSharedConfigValue = (currentValue: unknown, rawValue: string) => {
+  const trimmed = rawValue.trim()
+  if (typeof currentValue === "boolean") {
+    return trimmed.toLowerCase() === "true"
+  }
+  if (typeof currentValue === "number") {
+    const parsed = Number(trimmed)
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`Expected a number for this field, received '${rawValue}'.`)
+    }
+    return parsed
+  }
+  return trimmed
+}
+
 const writeGlobalSettings = async (settings: GlobalSettings) => {
   const configPath = globalSettingsPath()
   await mkdir(path.dirname(configPath), { recursive: true })
@@ -66,12 +168,32 @@ const normalizeSettings = (settings: GlobalSettings) => ({
       : DEFAULT_BASE_URL,
   apiKey:
     typeof settings.apiKey === "string" && settings.apiKey.trim() ? settings.apiKey.trim() : "",
+  peerName: typeof settings.peerName === "string" ? settings.peerName.trim() : "",
 })
 
 const validateCloudApiKey = (value: string) =>
   value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local."
 
-const statusMessage = (settings: GlobalSettings) => {
+const deriveLiveStatus = (api: Parameters<TuiPlugin>[0], settings: GlobalSettings) => {
+  const sessionName =
+    api.route?.current?.name === "session" && typeof api.route.current.params?.sessionID === "string"
+      ? api.route.current.params.sessionID
+      : undefined
+  const configuredWorkspace = settings.hosts?.opencode?.workspace
+  const liveWorkspace =
+    typeof configuredWorkspace === "string" && configuredWorkspace.trim()
+      ? configuredWorkspace.trim()
+      : path.basename(api.state?.path?.worktree || api.state?.path?.directory || "opencode")
+  return {
+    workspaceName: liveWorkspace,
+    sessionName,
+  }
+}
+
+const statusMessage = (
+  settings: GlobalSettings,
+  liveStatus?: { workspaceName?: string; sessionName?: string },
+) => {
   const normalized = normalizeSettings(settings)
   const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl)
   const deployment = isLocalBaseUrl(normalized.baseUrl)
@@ -84,6 +206,9 @@ const statusMessage = (settings: GlobalSettings) => {
     `Deployment: ${deployment}`,
     `Base URL: ${normalized.baseUrl}`,
     `API key: ${normalized.apiKey ? "set" : "not set"}`,
+    `Peer name: ${normalized.peerName || "not set"}`,
+    ...(liveStatus?.workspaceName ? [`Workspace: ${liveStatus.workspaceName}`] : []),
+    ...(liveStatus?.sessionName ? [`Session: ${liveStatus.sessionName}`] : []),
     `Config path: ${globalSettingsPath()}`,
     "",
     configured ? "Honcho is ready for OpenCode." : "Run /honcho:setup to finish configuration.",
@@ -145,10 +270,11 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
 
 const openStatusDialog = async (api: Parameters<TuiPlugin>[0]) => {
   const settings = await readGlobalSettings()
+  const liveStatus = deriveLiveStatus(api, settings)
   api.ui.dialog.replace(() =>
     api.ui.DialogAlert({
       title: "Honcho Status",
-      message: statusMessage(settings),
+      message: statusMessage(settings, liveStatus),
     }),
   )
 }
@@ -163,25 +289,48 @@ const openSettingsDialog = async (api: Parameters<TuiPlugin>[0]) => {
   )
 }
 
+const openSetupConfirmation = async (
+  api: Parameters<TuiPlugin>[0],
+  partial: Partial<GlobalSettings>,
+  summaryLines: string[],
+) => {
+  api.ui.dialog.replace(() =>
+    api.ui.DialogPrompt({
+      title: "Peer name",
+      placeholder: "Your Honcho peer name",
+      value: typeof partial.peerName === "string" ? partial.peerName : "",
+      onConfirm: async (peerName) => {
+        const configPath = await saveSettings({
+          ...partial,
+          peerName: peerName.trim(),
+        })
+        api.ui.dialog.replace(() =>
+          api.ui.DialogAlert({
+            title: "Honcho configured",
+            message: [`Saved settings to ${configPath}`, ...summaryLines, `Peer name: ${peerName.trim() || "not set"}`].join(
+              "\n",
+            ),
+          }),
+        )
+      },
+      onCancel: () => api.ui.dialog.clear(),
+    }),
+  )
+}
+
 const openLocalApiKeyPrompt = (api: Parameters<TuiPlugin>[0], baseUrl: string) => {
   api.ui.dialog.replace(() =>
     api.ui.DialogPrompt({
       title: "Optional Honcho API key",
       placeholder: "Leave blank for local unauthenticated mode",
       onConfirm: async (apiKey) => {
-        const configPath = await saveSettings({
-          apiKey: apiKey.trim(),
-          baseUrl,
-        })
-        api.ui.dialog.replace(() =>
-          api.ui.DialogAlert({
-            title: "Honcho configured",
-            message: [
-              `Saved settings to ${configPath}`,
-              `Base URL: ${baseUrl}`,
-              `API key: ${apiKey.trim() ? "set" : "not required for localhost mode"}`,
-            ].join("\n"),
-          }),
+        await openSetupConfirmation(
+          api,
+          {
+            apiKey: apiKey.trim(),
+            baseUrl,
+          },
+          [`Base URL: ${baseUrl}`, `API key: ${apiKey.trim() ? "set" : "not required for localhost mode"}`],
         )
       },
       onCancel: () => api.ui.dialog.clear(),
@@ -217,20 +366,139 @@ const openCloudApiKeyPrompt = (api: Parameters<TuiPlugin>[0]) => {
           )
           return
         }
-        const configPath = await saveSettings({
-          apiKey: apiKey.trim(),
-          baseUrl: DEFAULT_BASE_URL,
-        })
-        api.ui.dialog.replace(() =>
-          api.ui.DialogAlert({
-            title: "Honcho configured",
-            message: [
-              `Saved settings to ${configPath}`,
-              `Base URL: ${DEFAULT_BASE_URL}`,
-              `API key: ${apiKey.trim() ? "set" : "not set"}`,
-            ].join("\n"),
-          }),
+        await openSetupConfirmation(
+          api,
+          {
+            apiKey: apiKey.trim(),
+            baseUrl: DEFAULT_BASE_URL,
+          },
+          [`Base URL: ${DEFAULT_BASE_URL}`, `API key: ${apiKey.trim() ? "set" : "not set"}`],
         )
+      },
+      onCancel: () => api.ui.dialog.clear(),
+    }),
+  )
+}
+
+const openModeValueDialog = async (
+  api: Parameters<TuiPlugin>[0],
+  config: Record<string, unknown>,
+  fieldPath: string,
+) => {
+  const currentValue = getNestedValue(config, fieldPath)
+  const presetOptions = sharedConfigPresetOptions(fieldPath, currentValue)
+
+  const persistValue = async (rawValue: string) => {
+    try {
+      const nextConfig = structuredClone(config)
+      const nextValue = parseSharedConfigValue(currentValue, rawValue)
+      setNestedValue(nextConfig, fieldPath, nextValue)
+      const configPath = await writeSharedConfig(nextConfig)
+      api.ui.dialog.replace(() =>
+        api.ui.DialogAlert({
+          title: "Honcho mode updated",
+          message: [`Saved settings to ${configPath}`, `Field: ${fieldPath}`, `Value: ${String(nextValue)}`].join("\n"),
+        }),
+      )
+    } catch (error) {
+      api.ui.dialog.replace(() =>
+        api.ui.DialogAlert({
+          title: "Honcho mode update failed",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    }
+  }
+
+  if (presetOptions.length > 0) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogSelect({
+        title: `What should it be set to: ${presetOptions.join(", ")}`,
+        flat: true,
+        options: presetOptions.map((option) => ({
+          title: option,
+          value: option,
+        })),
+        onSelect: (option) => {
+          void persistValue(String(option.value))
+        },
+      }),
+    )
+    return
+  }
+
+  api.ui.dialog.replace(() =>
+    api.ui.DialogPrompt({
+      title: "What should it be set to:",
+      value: currentValue === undefined ? "" : String(currentValue),
+      onConfirm: (value) => {
+        void persistValue(value)
+      },
+      onCancel: () => api.ui.dialog.clear(),
+    }),
+  )
+}
+
+const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
+  const config = await readSharedConfig()
+  if (!config) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho config missing",
+        message: `The config does not exist at ${sharedConfigPath()}.`,
+      }),
+    )
+    return
+  }
+
+  const fieldPaths = listSharedConfigFields(config)
+  if (fieldPaths.length === 0) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho config empty",
+        message: `No editable fields were found in ${sharedConfigPath()}.`,
+      }),
+    )
+    return
+  }
+
+  api.ui.dialog.replace(() =>
+    api.ui.DialogSelect({
+      title: "Which field should be modified?",
+      options: fieldPaths.map((fieldPath) => ({
+        title: fieldPath,
+        value: fieldPath,
+      })),
+      onSelect: (option) => {
+        const canonicalField = resolveSharedConfigField(config, String(option.value))
+        void openModeValueDialog(api, config, canonicalField)
+      },
+    }),
+  )
+}
+
+const openInterviewDialog = (
+  api: Parameters<TuiPlugin>[0],
+  index = 0,
+  answers: string[] = [],
+) => {
+  const question = INTERVIEW_QUESTIONS[index]
+  if (!question) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho Interview",
+        message: INTERVIEW_QUESTIONS.map((entry, entryIndex) => `${entry}\n${answers[entryIndex] || ""}`).join("\n\n"),
+      }),
+    )
+    return
+  }
+
+  api.ui.dialog.replace(() =>
+    api.ui.DialogPrompt({
+      title: "Honcho Interview",
+      placeholder: question,
+      onConfirm: (value) => {
+        openInterviewDialog(api, index + 1, [...answers, value.trim()])
       },
       onCancel: () => api.ui.dialog.clear(),
     }),
@@ -300,6 +568,30 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
       void openSettingsDialog(api)
     },
   },
+  {
+    title: "Honcho Mode",
+    value: "honcho.mode",
+    description: "Edit shared Honcho mode fields from ~/.honcho/config.json",
+    category: "Honcho",
+    slash: {
+      name: "honcho:mode",
+    },
+    onSelect: () => {
+      void openModeDialog(api)
+    },
+  },
+  {
+    title: "Honcho Interview",
+    value: "honcho.interview",
+    description: "Ask the default Honcho interview questions without saving automatically",
+    category: "Honcho",
+    slash: {
+      name: "honcho:interview",
+    },
+    onSelect: () => {
+      openInterviewDialog(api)
+    },
+  },
 ]
 
 const tui: TuiPlugin = async (api) => {
@@ -313,10 +605,15 @@ const plugin: TuiPluginModule & { id: string } = {
 
 export const __testing = {
   buildCommands,
+  deriveLiveStatus,
+  interviewQuestions: [...INTERVIEW_QUESTIONS],
   normalizeSettings,
+  resolveSharedConfigField,
   saveSettings,
-  statusMessage,
   settingsMessage,
+  sharedConfigPath,
+  sharedConfigPresetOptions,
+  statusMessage,
   validateCloudApiKey,
 }
 

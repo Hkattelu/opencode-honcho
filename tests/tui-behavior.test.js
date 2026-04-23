@@ -33,6 +33,24 @@ test("status message reads the root baseUrl", () => {
   assert.match(message, /Base URL: http:\/\/127.0.0.1:8000/)
 })
 
+test("status message includes peer name and live workspace/session values when available", () => {
+  const message = __testing.statusMessage(
+    {
+      apiKey: "key",
+      peerName: "Ada",
+      baseUrl: "https://api.honcho.dev",
+    },
+    {
+      workspaceName: "opencode",
+      sessionName: "ses_test",
+    },
+  )
+
+  assert.match(message, /Peer name: Ada/)
+  assert.match(message, /Workspace: opencode/)
+  assert.match(message, /Session: ses_test/)
+})
+
 test("settings message shows config values separately from status messaging", () => {
   const message = __testing.settingsMessage({
     apiKey: "key",
@@ -70,31 +88,66 @@ test("status and settings messages are distinct surfaces", () => {
     },
   }
 
-  expect(__testing.statusMessage(settings)).not.toBe(__testing.settingsMessage(settings))
+  assert.notEqual(__testing.statusMessage(settings), __testing.settingsMessage(settings))
 })
 
-test("native TUI Honcho commands do not register slash aliases", () => {
+test("native TUI Honcho commands register slash aliases for setup, status, settings, mode, and interview", () => {
   const commands = __testing.buildCommands({})
   assert.deepEqual(commands.map((command) => command.value), [
     "honcho.setup",
     "honcho.status",
     "honcho.settings",
+    "honcho.mode",
+    "honcho.interview",
   ])
   assert.deepEqual(
     commands.map((command) => command.slash?.name),
-    ["honcho:setup", "honcho:status", "honcho:settings"],
+    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:mode", "honcho:interview"],
   )
+})
+
+test("shared config field resolution is case-insensitive and preserves canonical paths", () => {
+  const field = __testing.resolveSharedConfigField(
+    {
+      recallMode: "hybrid",
+      nested: {
+        SaveMessages: true,
+      },
+    },
+    "NeStEd.sAvEmEsSaGeS",
+  )
+
+  assert.equal(field, "nested.SaveMessages")
+})
+
+test("shared config preset options expose enum and boolean values", () => {
+  assert.deepEqual(__testing.sharedConfigPresetOptions("recallMode", "hybrid"), [
+    "hybrid",
+    "context",
+    "tools",
+  ])
+  assert.deepEqual(__testing.sharedConfigPresetOptions("saveMessages", true), ["true", "false"])
+})
+
+test("interview questions expose the default no-argument sequence", () => {
+  assert.deepEqual(__testing.interviewQuestions, [
+    "What are you working on right now?",
+    "Anything specific to remember about you?",
+    "Any goals to remember about you?",
+  ])
 })
 
 test("tui saveSettings persists only the final supported root and host fields", async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-clean-fields-"))
   const sharedConfigDir = path.join(homeDir, ".honcho")
-  const sharedConfigPath = path.join(sharedConfigDir, "config.json")
+  const configPath = path.join(sharedConfigDir, "config.json")
   const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
 
   await mkdir(sharedConfigDir, { recursive: true })
-  await writeFile(sharedConfigPath, JSON.stringify({}, null, 2))
+  await writeFile(configPath, JSON.stringify({}, null, 2))
   process.env.HOME = homeDir
+  process.env.USERPROFILE = homeDir
 
   try {
     await __testing.saveSettings({
@@ -114,7 +167,7 @@ test("tui saveSettings persists only the final supported root and host fields", 
       },
     })
 
-    const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
+    const persisted = JSON.parse(await readFile(configPath, "utf-8"))
     assert.equal(persisted.apiKey, "key")
     assert.equal(persisted.baseUrl, "https://api.honcho.dev")
     assert.equal(persisted.peerName, "user")
@@ -136,5 +189,7 @@ test("tui saveSettings persists only the final supported root and host fields", 
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousUserProfile
   }
 })
