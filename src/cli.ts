@@ -57,12 +57,22 @@ const preferredShellRcFile = () => {
   return "your shell rc file"
 }
 
-const installPathRecoveryMessage = () =>
+const installPathRecoveryMessageForUnix = () =>
   [
     "OpenCode CLI was not found on PATH.",
     "Install OpenCode first, then restart your shell or source your shell config before running this installer again.",
     `For example: source ${preferredShellRcFile()}`,
   ].join(" ")
+
+const installPathRecoveryMessageForWindows = () =>
+  [
+    "OpenCode CLI was not found on PATH.",
+    "Install OpenCode first, then restart Command Prompt or PowerShell before running this installer again.",
+    "If OpenCode was just installed, open a new terminal window so your PATH refreshes.",
+  ].join(" ")
+
+const installPathRecoveryMessage = () =>
+  process.platform === "win32" ? installPathRecoveryMessageForWindows() : installPathRecoveryMessageForUnix()
 
 const parseInstallArgs = (argv: string[]) => {
   let force = false

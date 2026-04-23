@@ -148,17 +148,19 @@ The plugin uses these OpenCode plugin capabilities:
 
 ## Development
 
+For macOS/Linux local branch testing:
+
 ```bash
 bun install
-bun run wire
+bun run build
+bun ./dist/cli.js install --plugin-spec "$PWD" --force
 ```
 
-`bun run wire` builds the current checkout and installs that exact checkout into OpenCode with `--force`, which is the intended local branch-testing flow.
+That install command wires the current checkout into OpenCode with `--force`, which is the intended local branch-testing flow.
 
 Additional validation commands:
 
 ```bash
-bun run build
 bun test
 bun run check
 ```
