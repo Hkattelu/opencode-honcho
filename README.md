@@ -49,7 +49,7 @@ If you want to save a single durable conclusion immediately, pass direct text to
 - **Session Mapping** - Sessions can be scoped per directory, repo, branch, chat instance, or globally
 - **Durable Writes** - Honcho can retain stable conclusions and session context
 - **Memory Retrieval** - Search memory, query Honcho knowledge, and inject relevant context into prompts
-- **Peer Modeling** - Supports the default classic peer model and optional hierarchical modeling for delegated agent flows
+- **Static Observation Topology** - User and root-agent peers follow a fixed observation model tuned for OpenCode
 
 ## Installation Output
 
@@ -78,7 +78,6 @@ OpenCode reads and writes this shared config file directly. OpenCode-specific de
       "workspace": "opencode",
       "aiPeer": "opencode",
       "recallMode": "hybrid",
-      "observationMode": "directional",
       "sessionStrategy": "per-directory"
     }
   }
@@ -151,6 +150,14 @@ The plugin uses these OpenCode plugin capabilities:
 
 ```bash
 bun install
+bun run wire
+```
+
+`bun run wire` builds the current checkout and installs that exact checkout into OpenCode with `--force`, which is the intended local branch-testing flow.
+
+Additional validation commands:
+
+```bash
 bun run build
 bun test
 bun run check

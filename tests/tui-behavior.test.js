@@ -61,7 +61,6 @@ test("settings message shows config values separately from status messaging", ()
         workspace: "opencode",
         aiPeer: "opencode",
         recallMode: "hybrid",
-        observationMode: "directional",
         sessionStrategy: "per-directory",
       },
     },
@@ -69,7 +68,7 @@ test("settings message shows config values separately from status messaging", ()
 
   assert.match(message, /Config path:/)
   assert.match(message, /Peer name: user-name/)
-  assert.match(message, /Observation mode: directional/)
+  assert.doesNotMatch(message, /Observation mode:/)
 })
 
 test("status and settings messages are distinct surfaces", () => {
@@ -82,7 +81,6 @@ test("status and settings messages are distinct surfaces", () => {
         workspace: "opencode",
         aiPeer: "opencode",
         recallMode: "hybrid",
-        observationMode: "directional",
         sessionStrategy: "per-directory",
       },
     },
@@ -126,6 +124,7 @@ test("shared config preset options expose enum and boolean values", () => {
     "context",
     "tools",
   ])
+  assert.deepEqual(__testing.sharedConfigPresetOptions("observationMode", "directional"), ["directional"])
   assert.deepEqual(__testing.sharedConfigPresetOptions("saveMessages", true), ["true", "false"])
 })
 
@@ -189,14 +188,13 @@ test("tui saveSettings persists only the final supported root and host fields", 
       baseUrl: "https://api.honcho.dev",
       hosts: {
         opencode: {
-          workspace: "opencode",
-          aiPeer: "opencode",
-          recallMode: "hybrid",
-          observationMode: "directional",
-          sessionStrategy: "per-directory",
-          writeFrequency: "session",
-          peerModel: "hierarchical",
-          baseUrl: "http://127.0.0.1:8000",
+        workspace: "opencode",
+        aiPeer: "opencode",
+        recallMode: "hybrid",
+        sessionStrategy: "per-directory",
+        writeFrequency: "session",
+        peerModel: "hierarchical",
+        baseUrl: "http://127.0.0.1:8000",
         },
       },
     })
@@ -214,7 +212,7 @@ test("tui saveSettings persists only the final supported root and host fields", 
     assert.equal(persisted.hosts.opencode.workspace, "opencode")
     assert.equal(persisted.hosts.opencode.aiPeer, "opencode")
     assert.equal(persisted.hosts.opencode.recallMode, "hybrid")
-    assert.equal(persisted.hosts.opencode.observationMode, "directional")
+    assert.equal("observationMode" in persisted.hosts.opencode, false)
     assert.equal(persisted.hosts.opencode.sessionStrategy, "per-directory")
     assert.equal("baseUrl" in persisted.hosts.opencode, false)
     assert.equal("enabled" in persisted.hosts.opencode, false)

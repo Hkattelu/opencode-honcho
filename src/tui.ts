@@ -10,7 +10,7 @@ const SHARED_SETTINGS_FILE_NAME = "config.json"
 
 const SHARED_CONFIG_PRESETS: Record<string, readonly string[]> = {
   recallmode: ["hybrid", "context", "tools"],
-  observationmode: ["directional", "unified"],
+  observationmode: ["directional"],
   peermodel: ["classic", "hierarchical"],
   sessionstrategy: ["per-repo", "per-directory", "per-session", "global", "git-branch", "chat-instance"],
   dialecticreasoninglevel: ["minimal", "low", "medium", "high", "max"],
@@ -27,7 +27,6 @@ type GlobalSettings = {
       workspace?: string
       aiPeer?: string
       recallMode?: "hybrid" | "context" | "tools"
-      observationMode?: "directional" | "unified"
       sessionStrategy?: "per-repo" | "per-directory" | "per-session" | "global" | "git-branch" | "chat-instance"
     }
   }
@@ -230,7 +229,6 @@ const settingsMessage = (settings: GlobalSettings) => {
     `Workspace: ${host.workspace || "opencode"}`,
     `AI peer: ${host.aiPeer || "opencode"}`,
     `Recall mode: ${host.recallMode || "hybrid"}`,
-    `Observation mode: ${host.observationMode || "directional"}`,
     `Session strategy: ${host.sessionStrategy || "per-directory"}`,
   ].join("\n")
 }
@@ -265,7 +263,6 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
         workspace: partialHost?.workspace ?? current.hosts?.opencode?.workspace ?? "opencode",
         aiPeer: partialHost?.aiPeer ?? current.hosts?.opencode?.aiPeer ?? "opencode",
         recallMode: partialHost?.recallMode ?? current.hosts?.opencode?.recallMode ?? "hybrid",
-        observationMode: partialHost?.observationMode ?? current.hosts?.opencode?.observationMode ?? "directional",
         sessionStrategy: partialHost?.sessionStrategy ?? current.hosts?.opencode?.sessionStrategy ?? "per-directory",
       },
     },

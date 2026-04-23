@@ -6,7 +6,6 @@ import { Honcho } from "@honcho-ai/sdk"
 import { installGlobalConfig, scaffoldTemplates } from "./scaffold.js"
 
 type RecallMode = "hybrid" | "context" | "tools"
-type ObservationMode = "directional" | "unified"
 type SessionStrategy = "per-repo" | "per-directory" | "per-session" | "global" | "git-branch" | "chat-instance"
 type DialecticReasoningLevel = "minimal" | "low" | "medium" | "high" | "max"
 type ContextRefreshSettings = {
@@ -27,11 +26,10 @@ type HonchoSettings = {
   aiPeer: string
   workspace: string
   recallMode: RecallMode
-  observationMode: ObservationMode
   sessionStrategy: SessionStrategy
 }
 
-type HostScopedSettings = Partial<Pick<HonchoSettings, "workspace" | "aiPeer" | "recallMode" | "observationMode" | "sessionStrategy">>
+type HostScopedSettings = Partial<Pick<HonchoSettings, "workspace" | "aiPeer" | "recallMode" | "sessionStrategy">>
 
 type RuntimeHandle = {
   rootDir: string
@@ -110,7 +108,6 @@ const DEFAULT_SETTINGS: HonchoSettings = {
   aiPeer: "opencode",
   workspace: "opencode",
   recallMode: "hybrid",
-  observationMode: "directional",
   sessionStrategy: "per-directory",
 }
 
@@ -133,14 +130,13 @@ const NUMBER_KEYS = new Set<keyof HonchoSettings>([])
 
 const ENUM_KEYS: Record<string, ReadonlySet<string>> = {
   recallMode: new Set(["hybrid", "context", "tools"]),
-  observationMode: new Set(["directional", "unified"]),
   sessionStrategy: new Set(["per-repo", "per-directory", "per-session", "global", "git-branch", "chat-instance"]),
 }
 
 const INHERITABLE_STRING_KEYS = new Set<keyof HonchoSettings>(["apiKey", "baseUrl", "peerName", "aiPeer", "workspace"])
 
 const TOP_LEVEL_SETTING_FIELDS = new Set<keyof HonchoSettings>(["apiKey", "baseUrl", "peerName"])
-const HOST_SETTING_FIELDS = new Set<keyof HonchoSettings>(["workspace", "aiPeer", "recallMode", "observationMode", "sessionStrategy"])
+const HOST_SETTING_FIELDS = new Set<keyof HonchoSettings>(["workspace", "aiPeer", "recallMode", "sessionStrategy"])
 
 const SETTING_FIELD_PATHS = new Set([
   "apiKey",
@@ -149,7 +145,6 @@ const SETTING_FIELD_PATHS = new Set([
   "aiPeer",
   "workspace",
   "recallMode",
-  "observationMode",
   "sessionStrategy",
 ])
 
@@ -655,7 +650,6 @@ const hostDefaults = (settings: HonchoSettings): Record<string, unknown> => {
     workspace,
     aiPeer,
     recallMode: settings.recallMode,
-    observationMode: settings.observationMode,
     sessionStrategy: settings.sessionStrategy,
   }
 }
@@ -1162,7 +1156,6 @@ export const createHonchoRuntimePlugin =
         sessionKey: handle.sessionKey,
         sessionName: handle.sessionKey,
         recallMode: handle.config.recallMode,
-        observationMode: handle.config.observationMode,
         sessionStrategy: handle.config.sessionStrategy,
         peerName: handle.config.peerName,
         configured: hasConfiguredAuth(handle.config),
@@ -1461,7 +1454,6 @@ export const createHonchoRuntimePlugin =
             `Workspace: ${handle.workspaceId}`,
             `Session key: ${handle.sessionKey}`,
             `Recall mode: ${handle.config.recallMode}`,
-            `Observation mode: ${handle.config.observationMode}`,
             `User peer: ${handle.userPeerId} (observe_me=true, observe_others=false)`,
             `Root agent peer: ${handle.rootAgentPeerId} (observe_me=true, observe_others=true)`,
             handle.childAgentPeerId

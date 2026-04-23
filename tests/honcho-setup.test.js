@@ -130,7 +130,6 @@ test("honcho_setup writes shared Honcho config with root peerName and hosts.open
         aiPeer: "opencode",
         workspace: "opencode",
         recallMode: "hybrid",
-        observationMode: "directional",
         sessionStrategy: "per-directory",
       })
       expect("linkedHosts" in persisted.hosts.opencode).toBe(false)
@@ -194,6 +193,7 @@ test("honcho_status reads effective settings from shared hosts.opencode config",
     expect(result.workspaceName).toBe("opencode")
     expect(typeof result.sessionName).toBe("string")
     expect(result.sessionName).toContain("opencode")
+    expect(result.observationMode).toBeUndefined()
     expect(result.peers.userPeer.observe_me).toBe(true)
     expect(result.peers.rootAgentPeer.observe_others).toBe(true)
     expect(result.peers.rootAgentPeer.observeOthers).toBeUndefined()
@@ -365,7 +365,6 @@ test("honcho_status preserves existing shared global config and adds hosts.openc
       aiPeer: "opencode",
       workspace: "opencode",
       recallMode: "hybrid",
-      observationMode: "directional",
       sessionStrategy: "per-directory",
     })
   })
