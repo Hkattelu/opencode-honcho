@@ -170,6 +170,70 @@ test("interview conclusions are prefixed with peer name", () => {
   assert.equal(__testing.formatInterviewConclusion("", "I like Python"), "user I like Python")
 })
 
+test("interview dialog surfaces a native error when saving the conclusion fails", async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-interview-dialog-error-"))
+  const sharedConfigDir = path.join(homeDir, ".honcho")
+  const configPath = path.join(sharedConfigDir, "config.json")
+  const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
+  let latestDialog
+
+  await mkdir(sharedConfigDir, { recursive: true })
+  await writeFile(configPath, JSON.stringify({ peerName: "Ada" }, null, 2))
+  process.env.HOME = homeDir
+  process.env.USERPROFILE = homeDir
+
+  try {
+    const api = {
+      route: {
+        current: {
+          name: "session",
+          params: {
+            sessionID: "ses_test",
+          },
+        },
+      },
+      state: {
+        path: {
+          directory: "/tmp/project",
+        },
+      },
+      client: {
+        session: {
+          command: async () => {
+            throw new Error("session command failed")
+          },
+        },
+      },
+      ui: {
+        dialog: {
+          replace: (factory) => {
+            latestDialog = factory()
+          },
+          clear: () => undefined,
+        },
+        DialogPrompt: (options) => ({ kind: "prompt", ...options }),
+        DialogAlert: (options) => ({ kind: "alert", ...options }),
+      },
+    }
+
+    const interviewCommand = __testing.buildCommands(api).find((command) => command.value === "honcho.interview")
+    interviewCommand.onSelect()
+
+    assert.equal(latestDialog.kind, "prompt")
+    await latestDialog.onConfirm("I like Python")
+
+    assert.equal(latestDialog.kind, "alert")
+    assert.equal(latestDialog.title, "Interview save failed")
+    assert.match(latestDialog.message, /session command failed/i)
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousUserProfile
+  }
+})
+
 test("tui saveSettings persists only the final supported root and host fields", async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-clean-fields-"))
   const sharedConfigDir = path.join(homeDir, ".honcho")

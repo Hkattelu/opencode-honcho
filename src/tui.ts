@@ -521,18 +521,27 @@ const openInterviewDialog = (api: Parameters<TuiPlugin>[0]) => {
           )
           return
         }
-        await api.client.session.command({
-          sessionID,
-          directory: api.state?.path?.directory,
-          command: "honcho:interview",
-          arguments: formattedContent,
-        })
-        api.ui.dialog.replace(() =>
-          api.ui.DialogAlert({
-            title: "Honcho Interview",
-            message: "Created 1 conclusion from the interview response.",
-          }),
-        )
+        try {
+          await api.client.session.command({
+            sessionID,
+            directory: api.state?.path?.directory,
+            command: "honcho:interview",
+            arguments: formattedContent,
+          })
+          api.ui.dialog.replace(() =>
+            api.ui.DialogAlert({
+              title: "Honcho Interview",
+              message: "Created 1 conclusion from the interview response.",
+            }),
+          )
+        } catch (error) {
+          api.ui.dialog.replace(() =>
+            api.ui.DialogAlert({
+              title: "Interview save failed",
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          )
+        }
       },
       onCancel: () => api.ui.dialog.clear(),
     }),
