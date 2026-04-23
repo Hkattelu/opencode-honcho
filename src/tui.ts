@@ -271,6 +271,9 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
     value: "honcho.setup",
     description: "Configure Honcho Cloud or local settings for OpenCode",
     category: "Honcho",
+    slash: {
+      name: "honcho:setup",
+    },
     onSelect: () => openSetupDialog(api),
   },
   {
@@ -278,6 +281,9 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
     value: "honcho.status",
     description: "Show Honcho runtime health for the current OpenCode session",
     category: "Honcho",
+    slash: {
+      name: "honcho:status",
+    },
     onSelect: () => {
       void openStatusDialog(api)
     },
@@ -287,6 +293,9 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
     value: "honcho.settings",
     description: "Show effective Honcho config values for OpenCode",
     category: "Honcho",
+    slash: {
+      name: "honcho:settings",
+    },
     onSelect: () => {
       void openSettingsDialog(api)
     },

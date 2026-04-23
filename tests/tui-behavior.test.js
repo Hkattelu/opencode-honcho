@@ -75,22 +75,15 @@ test("status and settings messages are distinct surfaces", () => {
 
 test("native TUI Honcho commands do not register slash aliases", () => {
   const commands = __testing.buildCommands({})
-  assert.deepEqual(
-    commands.map((command) => command.value),
-    ["honcho.setup", "honcho.status", "honcho.settings"],
-  )
-  assert.equal(commands.every((command) => command.slash === undefined), true)
-})
-
-test("native TUI commands do not register slash aliases", () => {
-  const commands = __testing.buildCommands({})
-
-  expect(commands.map((command) => command.value)).toEqual([
+  assert.deepEqual(commands.map((command) => command.value), [
     "honcho.setup",
     "honcho.status",
     "honcho.settings",
   ])
-  expect(commands.every((command) => command.slash === undefined)).toBe(true)
+  assert.deepEqual(
+    commands.map((command) => command.slash?.name),
+    ["honcho:setup", "honcho:status", "honcho:settings"],
+  )
 })
 
 test("tui saveSettings persists only the final supported root and host fields", async () => {

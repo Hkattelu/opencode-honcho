@@ -17,29 +17,6 @@ type InstallConfigResult = {
 }
 
 const opencodeCommands = () => ({
-  "honcho:setup": {
-    description: "Validate Honcho connectivity and repair OpenCode config.",
-    template:
-      "OpenCode Honcho config lives at `~/.honcho/config.json`. If the first command argument looks like an Honcho API key, pass it to `honcho_setup` as `apiKey` so it persists there. Do not call `honcho_get_config` for setup. Immediately call `honcho_setup` exactly once and summarize the effective OpenCode Honcho status.",
-  },
-  "honcho:status": {
-    description: "Show Honcho runtime health and current OpenCode memory state.",
-    template:
-      "Immediately call `honcho_status` exactly once. If the user asks for raw output, return the exact JSON and nothing else.",
-  },
-  "honcho:settings": {
-    description: "Inspect effective config values for OpenCode.",
-    template:
-      "OpenCode Honcho settings live in `~/.honcho/config.json`. Immediately call `honcho_get_config` exactly once and summarize the effective values.",
-  },
-  "honcho:set": {
-    description: "Persist a single Honcho setting for all future OpenCode sessions in this project.",
-    template: "Update `~/.honcho/config.json` by calling `honcho_set_config` exactly once with the requested field and value.",
-  },
-  "honcho:unset": {
-    description: "Reset a persisted Honcho setting back to its default value for this project.",
-    template: "Reset the requested key to its documented default via `honcho_set_config`.",
-  },
   "honcho:mode": {
     description: "Change the OpenCode Honcho recall mode.",
     template: "Call `honcho_set_config` with field `recallMode` and the requested value.",

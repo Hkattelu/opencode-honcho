@@ -115,8 +115,6 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project |
 | `/honcho:settings` | Show effective config values and config paths |
-| `/honcho:set` | Persist a config field in `~/.honcho/config.json` |
-| `/honcho:unset` | Reset a shared config field back to its default |
 | `/honcho:mode` | Change `recallMode` |
 | `/honcho:interview` | Capture durable memory or preferences into Honcho |
 
