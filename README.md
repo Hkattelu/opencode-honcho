@@ -32,15 +32,6 @@ If the installer cannot find `opencode`, restart your shell or source your shell
 5. Enter your `peerName`
 6. Run `/honcho:status` to verify the runtime
 
-### Step 4: (Optional) Kickstart with an Interview
-
-```text
-/honcho:interview
-```
-
-This asks one interview question and saves the non-empty response as a durable conclusion.
-If you want to save a single durable conclusion immediately, pass direct text to `/honcho:interview ...`.
-
 ## What You Get
 
 - **Persistent Memory** - OpenCode can retain durable context across sessions
@@ -117,7 +108,6 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project, including live workspace and session names when available |
 | `/honcho:settings` | Show effective config values and config paths |
 | `/honcho:config` | Edit shared Honcho fields in `~/.honcho/config.json` |
-| `/honcho:interview` | Answer one interview question and save the response as a durable conclusion |
 
 ## Agent Tools
 

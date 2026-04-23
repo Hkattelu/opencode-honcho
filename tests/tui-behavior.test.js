@@ -89,18 +89,17 @@ test("status and settings messages are distinct surfaces", () => {
   assert.notEqual(__testing.statusMessage(settings), __testing.settingsMessage(settings))
 })
 
-test("native TUI Honcho commands register slash aliases for setup, status, settings, config, and interview", () => {
+test("native TUI Honcho commands register slash aliases for setup, status, settings, and config", () => {
   const commands = __testing.buildCommands({})
   assert.deepEqual(commands.map((command) => command.value), [
     "honcho.setup",
     "honcho.status",
     "honcho.settings",
     "honcho.config",
-    "honcho.interview",
   ])
   assert.deepEqual(
     commands.map((command) => command.slash?.name),
-    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:config", "honcho:interview"],
+    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:config"],
   )
 })
 
@@ -159,87 +158,6 @@ test("readSharedConfig rejects non-object top-level JSON", async () => {
       __testing.readSharedConfig(),
       /must contain a JSON object at the top level/i,
     )
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
-    if (previousUserProfile === undefined) delete process.env.USERPROFILE
-    else process.env.USERPROFILE = previousUserProfile
-  }
-})
-
-test("interview prompt exposes the single-question copy", () => {
-  assert.equal(
-    __testing.interviewPrompt,
-    "Is there anything Honcho should know about you in particular?",
-  )
-})
-
-test("interview command description is concise", () => {
-  const interviewCommand = __testing.buildCommands({}).find((command) => command.value === "honcho.interview")
-  assert.equal(interviewCommand?.description, "Answer one interview question")
-})
-
-test("interview conclusions are prefixed with peer name", () => {
-  assert.equal(__testing.formatInterviewConclusion("Ada", "I like Python"), "Ada I like Python")
-  assert.equal(__testing.formatInterviewConclusion("", "I like Python"), "user I like Python")
-})
-
-test("interview dialog surfaces a native error when saving the conclusion fails", async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-interview-dialog-error-"))
-  const sharedConfigDir = path.join(homeDir, ".honcho")
-  const configPath = path.join(sharedConfigDir, "config.json")
-  const previousHome = process.env.HOME
-  const previousUserProfile = process.env.USERPROFILE
-  let latestDialog
-
-  await mkdir(sharedConfigDir, { recursive: true })
-  await writeFile(configPath, JSON.stringify({ peerName: "Ada" }, null, 2))
-  process.env.HOME = homeDir
-  process.env.USERPROFILE = homeDir
-
-  try {
-    const api = {
-      route: {
-        current: {
-          name: "session",
-          params: {
-            sessionID: "ses_test",
-          },
-        },
-      },
-      state: {
-        path: {
-          directory: "/tmp/project",
-        },
-      },
-      client: {
-        session: {
-          command: async () => {
-            throw new Error("session command failed")
-          },
-        },
-      },
-      ui: {
-        dialog: {
-          replace: (factory) => {
-            latestDialog = factory()
-          },
-          clear: () => undefined,
-        },
-        DialogPrompt: (options) => ({ kind: "prompt", ...options }),
-        DialogAlert: (options) => ({ kind: "alert", ...options }),
-      },
-    }
-
-    const interviewCommand = __testing.buildCommands(api).find((command) => command.value === "honcho.interview")
-    interviewCommand.onSelect()
-
-    assert.equal(latestDialog.kind, "prompt")
-    await latestDialog.onConfirm("I like Python")
-
-    assert.equal(latestDialog.kind, "alert")
-    assert.equal(latestDialog.title, "Interview save failed")
-    assert.match(latestDialog.message, /session command failed/i)
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
