@@ -22,6 +22,13 @@ const INTERVIEW_QUESTIONS = [
   "Any goals to remember about you?",
 ] as const
 
+const INTERVIEW_TEMPLATE = `${INTERVIEW_QUESTIONS[0]}
+
+${INTERVIEW_QUESTIONS[1]}
+
+${INTERVIEW_QUESTIONS[2]}
+`
+
 type GlobalSettings = {
   apiKey?: string
   peerName?: string
@@ -43,7 +50,8 @@ const globalSettingsPath = () =>
 const sharedConfigPath = () =>
   path.join(process.env.HOME || process.env.USERPROFILE || homedir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME)
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isLocalBaseUrl = (value: string) => {
   if (!value.trim()) return false
@@ -74,7 +82,10 @@ const readSharedConfig = async (): Promise<Record<string, unknown> | null> => {
   try {
     const raw = await readFile(configPath, "utf-8")
     const parsed = JSON.parse(raw)
-    return isRecord(parsed) ? parsed : {}
+    if (!isRecord(parsed)) {
+      throw new Error(`${configPath} must contain a JSON object at the top level.`)
+    }
+    return parsed
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null
@@ -174,8 +185,28 @@ const normalizeSettings = (settings: GlobalSettings) => ({
 const validateCloudApiKey = (value: string) =>
   value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local."
 
+const parseInterviewAnswers = (input: string) => {
+  let remaining = input.replace(/\r\n/g, "\n")
+  return INTERVIEW_QUESTIONS.map((question, index) => {
+    const start = remaining.indexOf(question)
+    if (start === -1) return ""
+    const afterQuestion = remaining.slice(start + question.length)
+    const nextQuestion = INTERVIEW_QUESTIONS[index + 1]
+    if (!nextQuestion) {
+      return afterQuestion.trim()
+    }
+    const nextIndex = afterQuestion.indexOf(nextQuestion)
+    if (nextIndex === -1) {
+      return afterQuestion.trim()
+    }
+    const answer = afterQuestion.slice(0, nextIndex).trim()
+    remaining = afterQuestion.slice(nextIndex)
+    return answer
+  })
+}
+
 const deriveLiveStatus = (api: Parameters<TuiPlugin>[0], settings: GlobalSettings) => {
-  const sessionName =
+  const openCodeSessionId =
     api.route?.current?.name === "session" && typeof api.route.current.params?.sessionID === "string"
       ? api.route.current.params.sessionID
       : undefined
@@ -186,13 +217,13 @@ const deriveLiveStatus = (api: Parameters<TuiPlugin>[0], settings: GlobalSetting
       : path.basename(api.state?.path?.worktree || api.state?.path?.directory || "opencode")
   return {
     workspaceName: liveWorkspace,
-    sessionName,
+    openCodeSessionId,
   }
 }
 
 const statusMessage = (
   settings: GlobalSettings,
-  liveStatus?: { workspaceName?: string; sessionName?: string },
+  liveStatus?: { workspaceName?: string; openCodeSessionId?: string },
 ) => {
   const normalized = normalizeSettings(settings)
   const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl)
@@ -208,7 +239,7 @@ const statusMessage = (
     `API key: ${normalized.apiKey ? "set" : "not set"}`,
     `Peer name: ${normalized.peerName || "not set"}`,
     ...(liveStatus?.workspaceName ? [`Workspace: ${liveStatus.workspaceName}`] : []),
-    ...(liveStatus?.sessionName ? [`Session: ${liveStatus.sessionName}`] : []),
+    ...(liveStatus?.openCodeSessionId ? [`OpenCode session: ${liveStatus.openCodeSessionId}`] : []),
     `Config path: ${globalSettingsPath()}`,
     "",
     configured ? "Honcho is ready for OpenCode." : "Run /honcho:setup to finish configuration.",
@@ -440,7 +471,18 @@ const openModeValueDialog = async (
 }
 
 const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
-  const config = await readSharedConfig()
+  let config: Record<string, unknown> | null
+  try {
+    config = await readSharedConfig()
+  } catch (error) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho config invalid",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    )
+    return
+  }
   if (!config) {
     api.ui.dialog.replace(() =>
       api.ui.DialogAlert({
@@ -477,28 +519,50 @@ const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
   )
 }
 
-const openInterviewDialog = (
-  api: Parameters<TuiPlugin>[0],
-  index = 0,
-  answers: string[] = [],
-) => {
-  const question = INTERVIEW_QUESTIONS[index]
-  if (!question) {
-    api.ui.dialog.replace(() =>
-      api.ui.DialogAlert({
-        title: "Honcho Interview",
-        message: INTERVIEW_QUESTIONS.map((entry, entryIndex) => `${entry}\n${answers[entryIndex] || ""}`).join("\n\n"),
-      }),
-    )
-    return
-  }
-
+const openInterviewDialog = (api: Parameters<TuiPlugin>[0]) => {
   api.ui.dialog.replace(() =>
     api.ui.DialogPrompt({
       title: "Honcho Interview",
-      placeholder: question,
-      onConfirm: (value) => {
-        openInterviewDialog(api, index + 1, [...answers, value.trim()])
+      value: INTERVIEW_TEMPLATE,
+      onConfirm: async (value) => {
+        const answers = parseInterviewAnswers(value)
+        const conclusions = answers.filter((answer) => answer.trim())
+        if (conclusions.length === 0) {
+          api.ui.dialog.replace(() =>
+            api.ui.DialogAlert({
+              title: "Honcho Interview",
+              message: "Enter at least one non-empty answer before saving conclusions.",
+            }),
+          )
+          return
+        }
+        const sessionID =
+          api.route?.current?.name === "session" && typeof api.route.current.params?.sessionID === "string"
+            ? api.route.current.params.sessionID
+            : undefined
+        if (!sessionID) {
+          api.ui.dialog.replace(() =>
+            api.ui.DialogAlert({
+              title: "Honcho Interview",
+              message: "Open a session before saving interview conclusions.",
+            }),
+          )
+          return
+        }
+        for (const content of conclusions) {
+          await api.client.session.command({
+            sessionID,
+            directory: api.state?.path?.directory,
+            command: "honcho:interview",
+            arguments: content,
+          })
+        }
+        api.ui.dialog.replace(() =>
+          api.ui.DialogAlert({
+            title: "Honcho Interview",
+            message: `Created ${conclusions.length} conclusion${conclusions.length === 1 ? "" : "s"} from the interview answers.`,
+          }),
+        )
       },
       onCancel: () => api.ui.dialog.clear(),
     }),
@@ -583,7 +647,7 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
   {
     title: "Honcho Interview",
     value: "honcho.interview",
-    description: "Ask the default Honcho interview questions without saving automatically",
+    description: "Fill out the Honcho interview and save each non-empty answer as a conclusion",
     category: "Honcho",
     slash: {
       name: "honcho:interview",
@@ -607,7 +671,10 @@ export const __testing = {
   buildCommands,
   deriveLiveStatus,
   interviewQuestions: [...INTERVIEW_QUESTIONS],
+  interviewTemplate: INTERVIEW_TEMPLATE,
   normalizeSettings,
+  parseInterviewAnswers,
+  readSharedConfig,
   resolveSharedConfigField,
   saveSettings,
   settingsMessage,

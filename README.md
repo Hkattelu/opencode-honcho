@@ -38,8 +38,8 @@ If the installer cannot find `opencode`, restart your shell or source your shell
 /honcho:interview
 ```
 
-This opens the three-question Honcho interview flow without saving conclusions automatically.
-If you want to save a durable conclusion immediately, pass direct text to `/honcho:interview ...`.
+This opens a single-screen three-question Honcho interview and saves each non-empty answer as a durable conclusion.
+If you want to save a single durable conclusion immediately, pass direct text to `/honcho:interview ...`.
 
 ## What You Get
 
@@ -118,7 +118,7 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project, including live workspace and session names when available |
 | `/honcho:settings` | Show effective config values and config paths |
 | `/honcho:mode` | Edit shared Honcho fields in `~/.honcho/config.json` |
-| `/honcho:interview` | Ask the default Honcho interview questions without auto-saving conclusions |
+| `/honcho:interview` | Fill out the interview and save each non-empty answer as a durable conclusion |
 
 ## Agent Tools
 

@@ -33,7 +33,7 @@ test("status message reads the root baseUrl", () => {
   assert.match(message, /Base URL: http:\/\/127.0.0.1:8000/)
 })
 
-test("status message includes peer name and live workspace/session values when available", () => {
+test("status message includes peer name and live workspace/OpenCode session values when available", () => {
   const message = __testing.statusMessage(
     {
       apiKey: "key",
@@ -42,13 +42,13 @@ test("status message includes peer name and live workspace/session values when a
     },
     {
       workspaceName: "opencode",
-      sessionName: "ses_test",
+      openCodeSessionId: "ses_test",
     },
   )
 
   assert.match(message, /Peer name: Ada/)
   assert.match(message, /Workspace: opencode/)
-  assert.match(message, /Session: ses_test/)
+  assert.match(message, /OpenCode session: ses_test/)
 })
 
 test("settings message shows config values separately from status messaging", () => {
@@ -129,11 +129,55 @@ test("shared config preset options expose enum and boolean values", () => {
   assert.deepEqual(__testing.sharedConfigPresetOptions("saveMessages", true), ["true", "false"])
 })
 
-test("interview questions expose the default no-argument sequence", () => {
+test("readSharedConfig rejects non-object top-level JSON", async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-invalid-shared-config-"))
+  const sharedConfigDir = path.join(homeDir, ".honcho")
+  const configPath = path.join(sharedConfigDir, "config.json")
+  const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
+
+  await mkdir(sharedConfigDir, { recursive: true })
+  await writeFile(configPath, JSON.stringify(["not-an-object"], null, 2))
+  process.env.HOME = homeDir
+  process.env.USERPROFILE = homeDir
+
+  try {
+    await assert.rejects(
+      __testing.readSharedConfig(),
+      /must contain a JSON object at the top level/i,
+    )
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousUserProfile
+  }
+})
+
+test("interview questions expose the default sequence and template", () => {
   assert.deepEqual(__testing.interviewQuestions, [
     "What are you working on right now?",
     "Anything specific to remember about you?",
     "Any goals to remember about you?",
+  ])
+  assert.match(__testing.interviewTemplate, /What are you working on right now\?/)
+  assert.match(__testing.interviewTemplate, /Anything specific to remember about you\?/)
+})
+
+test("parseInterviewAnswers extracts answers from the single-screen template", () => {
+  const answers = __testing.parseInterviewAnswers(`What are you working on right now?
+Python projects
+
+Anything specific to remember about you?
+Prefer concise answers
+
+Any goals to remember about you?
+Ship PR 11`)
+
+  assert.deepEqual(answers, [
+    "Python projects",
+    "Prefer concise answers",
+    "Ship PR 11",
   ])
 })
 

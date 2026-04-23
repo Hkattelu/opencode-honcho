@@ -26,7 +26,7 @@ test("installGlobalConfig writes plugin and Honcho commands into global opencode
   expect(config.command["honcho:mode"].template).toMatch(/What should it be set to:/)
   expect(config.command["honcho:interview"].description).toMatch(/durable memory/i)
   expect(config.command["honcho:interview"].template).toMatch(/What are you working on right now\?/)
-  expect(config.command["honcho:interview"].template).toMatch(/do not create any conclusions automatically/i)
+  expect(config.command["honcho:interview"].template).toMatch(/create one durable conclusion for each non-empty answer/i)
   expect(config.command["honcho:interview"].template).toMatch(/honcho_create_conclusion/)
   expect(config.command["honcho:setup"]).toBeUndefined()
   expect(config.command["honcho:status"]).toBeUndefined()
