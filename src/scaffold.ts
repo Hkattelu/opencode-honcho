@@ -16,13 +16,7 @@ type InstallConfigResult = {
   pluginSpec: string
 }
 
-const opencodeCommands = () => ({
-  "honcho:config": {
-    description: "Change shared OpenCode Honcho config values.",
-    template:
-      "Use the native Honcho config UI backed by `~/.honcho/config.json`. Show the available config fields, verify the selected field still exists case-insensitively in `~/.honcho/config.json`, then ask `What should it be set to:`. If the field has presets, ask `What should it be set to: <preset options>`. If `~/.honcho/config.json` does not exist, tell the user that the config does not exist there.",
-  },
-})
+const opencodeCommands = () => ({})
 
 const globalConfigDir = () =>
   path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "opencode")

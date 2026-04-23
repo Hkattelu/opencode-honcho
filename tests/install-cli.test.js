@@ -19,13 +19,12 @@ test("installGlobalConfig writes plugin and Honcho commands into global opencode
   expect(config.plugin).toEqual(["@honcho-ai/opencode-honcho"])
   expect(config.command["honcho:set"]).toBeUndefined()
   expect(config.command["honcho:unset"]).toBeUndefined()
-  expect(config.command["honcho:config"]).toBeTruthy()
+  expect(config.command["honcho:config"]).toBeUndefined()
   expect(config.command["honcho:write"]).toBeUndefined()
-  expect(config.command["honcho:config"].template).toMatch(/~\/\.honcho\/config\.json/)
-  expect(config.command["honcho:config"].template).toMatch(/What should it be set to:/)
   expect(config.command["honcho:setup"]).toBeUndefined()
   expect(config.command["honcho:status"]).toBeUndefined()
   expect(config.command["honcho:settings"]).toBeUndefined()
+  expect(result.commandNames).toEqual([])
 })
 
 test("installGlobalConfig preserves existing config and avoids duplicate plugin specs", async () => {
@@ -61,5 +60,5 @@ test("installGlobalConfig preserves existing config and avoids duplicate plugin 
   expect(config.command["honcho:settings"]).toBeUndefined()
   expect(config.command["honcho:set"]).toBeUndefined()
   expect(config.command["honcho:unset"]).toBeUndefined()
-  expect(config.command["honcho:config"]).toBeTruthy()
+  expect(config.command["honcho:config"]).toBeUndefined()
 })
