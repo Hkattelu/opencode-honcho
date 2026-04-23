@@ -148,6 +148,27 @@ bun ./dist/cli.js install --plugin-spec "$PWD" --force
 
 That install command wires the current checkout into OpenCode with `--force`, which is the intended local branch-testing flow.
 
+<details>
+<summary>Windows local install</summary>
+
+For the current PR 11 branch:
+
+```bat
+git clone --branch feat/pr11-final https://github.com/plastic-labs/opencode-honcho.git
+cd opencode-honcho
+bun install && bun run build && bun .\dist\cli.js install --plugin-spec "%CD%" --force
+```
+
+After PR 11 is merged, replace the branch with `main`:
+
+```bat
+git clone --branch main https://github.com/plastic-labs/opencode-honcho.git
+cd opencode-honcho
+bun install && bun run build && bun .\dist\cli.js install --plugin-spec "%CD%" --force
+```
+
+</details>
+
 Additional validation commands:
 
 ```bash
