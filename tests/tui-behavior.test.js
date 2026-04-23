@@ -154,31 +154,11 @@ test("readSharedConfig rejects non-object top-level JSON", async () => {
   }
 })
 
-test("interview questions expose the default sequence and template", () => {
-  assert.deepEqual(__testing.interviewQuestions, [
-    "What are you working on right now?",
-    "Anything specific to remember about you?",
-    "Any goals to remember about you?",
-  ])
-  assert.match(__testing.interviewTemplate, /What are you working on right now\?/)
-  assert.match(__testing.interviewTemplate, /Anything specific to remember about you\?/)
-})
-
-test("parseInterviewAnswers extracts answers from the single-screen template", () => {
-  const answers = __testing.parseInterviewAnswers(`What are you working on right now?
-Python projects
-
-Anything specific to remember about you?
-Prefer concise answers
-
-Any goals to remember about you?
-Ship PR 11`)
-
-  assert.deepEqual(answers, [
-    "Python projects",
-    "Prefer concise answers",
-    "Ship PR 11",
-  ])
+test("interview prompt exposes the single-question copy", () => {
+  assert.equal(
+    __testing.interviewPrompt,
+    "Is there anything Honcho should know about you in particular?",
+  )
 })
 
 test("tui saveSettings persists only the final supported root and host fields", async () => {

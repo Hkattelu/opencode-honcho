@@ -16,18 +16,7 @@ const SHARED_CONFIG_PRESETS: Record<string, readonly string[]> = {
   dialecticreasoninglevel: ["minimal", "low", "medium", "high", "max"],
 }
 
-const INTERVIEW_QUESTIONS = [
-  "What are you working on right now?",
-  "Anything specific to remember about you?",
-  "Any goals to remember about you?",
-] as const
-
-const INTERVIEW_TEMPLATE = `${INTERVIEW_QUESTIONS[0]}
-
-${INTERVIEW_QUESTIONS[1]}
-
-${INTERVIEW_QUESTIONS[2]}
-`
+const INTERVIEW_PROMPT = "Is there anything Honcho should know about you in particular?"
 
 type GlobalSettings = {
   apiKey?: string
@@ -184,26 +173,6 @@ const normalizeSettings = (settings: GlobalSettings) => ({
 
 const validateCloudApiKey = (value: string) =>
   value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local."
-
-const parseInterviewAnswers = (input: string) => {
-  let remaining = input.replace(/\r\n/g, "\n")
-  return INTERVIEW_QUESTIONS.map((question, index) => {
-    const start = remaining.indexOf(question)
-    if (start === -1) return ""
-    const afterQuestion = remaining.slice(start + question.length)
-    const nextQuestion = INTERVIEW_QUESTIONS[index + 1]
-    if (!nextQuestion) {
-      return afterQuestion.trim()
-    }
-    const nextIndex = afterQuestion.indexOf(nextQuestion)
-    if (nextIndex === -1) {
-      return afterQuestion.trim()
-    }
-    const answer = afterQuestion.slice(0, nextIndex).trim()
-    remaining = afterQuestion.slice(nextIndex)
-    return answer
-  })
-}
 
 const deriveLiveStatus = (api: Parameters<TuiPlugin>[0], settings: GlobalSettings) => {
   const openCodeSessionId =
@@ -523,15 +492,14 @@ const openInterviewDialog = (api: Parameters<TuiPlugin>[0]) => {
   api.ui.dialog.replace(() =>
     api.ui.DialogPrompt({
       title: "Honcho Interview",
-      value: INTERVIEW_TEMPLATE,
+      placeholder: INTERVIEW_PROMPT,
       onConfirm: async (value) => {
-        const answers = parseInterviewAnswers(value)
-        const conclusions = answers.filter((answer) => answer.trim())
-        if (conclusions.length === 0) {
+        const content = value.trim()
+        if (!content) {
           api.ui.dialog.replace(() =>
             api.ui.DialogAlert({
               title: "Honcho Interview",
-              message: "Enter at least one non-empty answer before saving conclusions.",
+              message: "Enter something before saving.",
             }),
           )
           return
@@ -549,18 +517,16 @@ const openInterviewDialog = (api: Parameters<TuiPlugin>[0]) => {
           )
           return
         }
-        for (const content of conclusions) {
-          await api.client.session.command({
-            sessionID,
-            directory: api.state?.path?.directory,
-            command: "honcho:interview",
-            arguments: content,
-          })
-        }
+        await api.client.session.command({
+          sessionID,
+          directory: api.state?.path?.directory,
+          command: "honcho:interview",
+          arguments: content,
+        })
         api.ui.dialog.replace(() =>
           api.ui.DialogAlert({
             title: "Honcho Interview",
-            message: `Created ${conclusions.length} conclusion${conclusions.length === 1 ? "" : "s"} from the interview answers.`,
+            message: "Created 1 conclusion from the interview response.",
           }),
         )
       },
@@ -647,7 +613,7 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
   {
     title: "Honcho Interview",
     value: "honcho.interview",
-    description: "Fill out the Honcho interview and save each non-empty answer as a conclusion",
+    description: "Answer one interview question and save the response as a conclusion",
     category: "Honcho",
     slash: {
       name: "honcho:interview",
@@ -670,10 +636,8 @@ const plugin: TuiPluginModule & { id: string } = {
 export const __testing = {
   buildCommands,
   deriveLiveStatus,
-  interviewQuestions: [...INTERVIEW_QUESTIONS],
-  interviewTemplate: INTERVIEW_TEMPLATE,
+  interviewPrompt: INTERVIEW_PROMPT,
   normalizeSettings,
-  parseInterviewAnswers,
   readSharedConfig,
   resolveSharedConfigField,
   saveSettings,

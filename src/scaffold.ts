@@ -25,7 +25,7 @@ const opencodeCommands = () => ({
   "honcho:interview": {
     description: "Capture durable memory into Honcho.",
     template:
-      "If direct text is provided, call `honcho_create_conclusion` exactly once with that exact remaining argument text verbatim. If no text is provided, ask these three questions and create one durable conclusion for each non-empty answer: `What are you working on right now?` `Anything specific to remember about you?` `Any goals to remember about you?`",
+      "If direct text is provided, call `honcho_create_conclusion` exactly once with that exact remaining argument text verbatim. If no text is provided, ask `Is there anything Honcho should know about you in particular?` and create one durable conclusion from the non-empty response.",
   },
 })
 
