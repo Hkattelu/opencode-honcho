@@ -1623,7 +1623,7 @@ export const createHonchoRuntimePlugin =
           },
         }),
         honcho_search: tool({
-          description: "Search Honcho session messages and retrieved context for this OpenCode project using the derived workspace and session mapping.",
+          description: "Search Honcho session messages for this OpenCode project using the derived workspace and session mapping.",
           args: {
             query: tool.schema.string(),
             max_items: tool.schema.number().optional(),

@@ -49,7 +49,7 @@ If you want to save a single durable conclusion immediately, pass direct text to
 - **Session Mapping** - Sessions can be scoped per directory, repo, branch, chat instance, or globally
 - **Durable Writes** - Honcho can retain stable conclusions and session context
 - **Memory Retrieval** - Search memory, query Honcho knowledge, and inject relevant context into prompts
-- **Static Observation Topology** - User and root-agent peers follow a fixed observation model tuned for OpenCode
+- **Peer Modeling** - User and root-agent peers follow a fixed observation model tuned for OpenCode
 
 ## Installation Output
 
@@ -113,7 +113,7 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 
 | Command | Description |
 | --- | --- |
-| `/honcho:setup` | First-time setup for cloud or local Honcho, including `peerName` |
+| `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project, including live workspace and session names when available |
 | `/honcho:settings` | Show effective config values and config paths |
 | `/honcho:mode` | Edit shared Honcho fields in `~/.honcho/config.json` |
@@ -129,7 +129,7 @@ The plugin exposes these tools inside OpenCode:
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting |
-| `honcho_search` | Search Honcho session messages and retrieved context (not durable conclusions) |
+| `honcho_search` | Search Honcho session messages in the current session |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
 
