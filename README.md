@@ -116,7 +116,7 @@ If OpenCode is running in Docker or another remote environment, `localhost` may 
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project, including live workspace and session names when available |
 | `/honcho:settings` | Show effective config values and config paths |
-| `/honcho:mode` | Edit shared Honcho fields in `~/.honcho/config.json` |
+| `/honcho:config` | Edit shared Honcho fields in `~/.honcho/config.json` |
 | `/honcho:interview` | Answer one interview question and save the response as a durable conclusion |
 
 ## Agent Tools

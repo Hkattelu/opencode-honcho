@@ -417,14 +417,14 @@ const openModeValueDialog = async (
       const configPath = await writeSharedConfig(nextConfig)
       api.ui.dialog.replace(() =>
         api.ui.DialogAlert({
-          title: "Honcho mode updated",
+      title: "Honcho config updated",
           message: [`Saved settings to ${configPath}`, `Field: ${fieldPath}`, `Value: ${String(nextValue)}`].join("\n"),
         }),
       )
     } catch (error) {
       api.ui.dialog.replace(() =>
         api.ui.DialogAlert({
-          title: "Honcho mode update failed",
+          title: "Honcho config update failed",
           message: error instanceof Error ? error.message : String(error),
         }),
       )
@@ -630,12 +630,12 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
     },
   },
   {
-    title: "Honcho Mode",
-    value: "honcho.mode",
-    description: "Edit shared Honcho mode fields from ~/.honcho/config.json",
+    title: "Honcho Config",
+    value: "honcho.config",
+    description: "Edit shared Honcho config fields from ~/.honcho/config.json",
     category: "Honcho",
     slash: {
-      name: "honcho:mode",
+      name: "honcho:config",
     },
     onSelect: () => {
       void openModeDialog(api)

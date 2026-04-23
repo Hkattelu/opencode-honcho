@@ -89,22 +89,22 @@ test("status and settings messages are distinct surfaces", () => {
   assert.notEqual(__testing.statusMessage(settings), __testing.settingsMessage(settings))
 })
 
-test("native TUI Honcho commands register slash aliases for setup, status, settings, mode, and interview", () => {
+test("native TUI Honcho commands register slash aliases for setup, status, settings, config, and interview", () => {
   const commands = __testing.buildCommands({})
   assert.deepEqual(commands.map((command) => command.value), [
     "honcho.setup",
     "honcho.status",
     "honcho.settings",
-    "honcho.mode",
+    "honcho.config",
     "honcho.interview",
   ])
   assert.deepEqual(
     commands.map((command) => command.slash?.name),
-    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:mode", "honcho:interview"],
+    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:config", "honcho:interview"],
   )
 })
 
-test("honcho mode only exposes top-level and hosts.opencode fields", () => {
+test("honcho config only exposes top-level and hosts.opencode fields", () => {
   assert.deepEqual(__testing.modeEditableFieldPaths(), [
     "apiKey",
     "baseUrl",

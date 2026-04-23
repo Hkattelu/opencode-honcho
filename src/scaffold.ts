@@ -17,10 +17,10 @@ type InstallConfigResult = {
 }
 
 const opencodeCommands = () => ({
-  "honcho:mode": {
-    description: "Change the OpenCode Honcho recall mode.",
+  "honcho:config": {
+    description: "Change shared OpenCode Honcho config values.",
     template:
-      "Use the native Honcho mode UI backed by `~/.honcho/config.json`. Show the available config fields, verify the selected field still exists case-insensitively in `~/.honcho/config.json`, then ask `What should it be set to:`. If the field has presets, ask `What should it be set to: <preset options>`. If `~/.honcho/config.json` does not exist, tell the user that the config does not exist there.",
+      "Use the native Honcho config UI backed by `~/.honcho/config.json`. Show the available config fields, verify the selected field still exists case-insensitively in `~/.honcho/config.json`, then ask `What should it be set to:`. If the field has presets, ask `What should it be set to: <preset options>`. If `~/.honcho/config.json` does not exist, tell the user that the config does not exist there.",
   },
   "honcho:interview": {
     description: "Capture durable memory into Honcho.",
