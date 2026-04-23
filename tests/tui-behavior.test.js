@@ -19,6 +19,7 @@ test("status message still reports cloud mode without a key as not configured", 
   })
 
   assert.match(message, /Configured: no/)
+  assert.match(message, /Peer name: user/)
   assert.match(message, /Run \/honcho:setup to finish configuration\./)
 })
 
@@ -37,7 +38,7 @@ test("status message includes peer name and live workspace/OpenCode session valu
   const message = __testing.statusMessage(
     {
       apiKey: "key",
-      peerName: "Ada",
+      peerName: "user",
       baseUrl: "https://api.honcho.dev",
     },
     {
@@ -46,7 +47,7 @@ test("status message includes peer name and live workspace/OpenCode session valu
     },
   )
 
-  assert.match(message, /Peer name: Ada/)
+  assert.match(message, /Peer name: user/)
   assert.match(message, /Workspace: opencode/)
   assert.match(message, /OpenCode session: ses_test/)
 })
@@ -54,7 +55,7 @@ test("status message includes peer name and live workspace/OpenCode session valu
 test("settings message shows config values separately from status messaging", () => {
   const message = __testing.settingsMessage({
     apiKey: "key",
-    peerName: "user-name",
+    peerName: "user",
     baseUrl: "https://api.honcho.dev",
     hosts: {
       opencode: {
@@ -67,14 +68,14 @@ test("settings message shows config values separately from status messaging", ()
   })
 
   assert.match(message, /Config path:/)
-  assert.match(message, /Peer name: user-name/)
+  assert.match(message, /Peer name: user/)
   assert.doesNotMatch(message, /Observation mode:/)
 })
 
 test("status and settings messages are distinct surfaces", () => {
   const settings = {
     apiKey: "key",
-    peerName: "user-name",
+    peerName: "user",
     baseUrl: "https://api.honcho.dev",
     hosts: {
       opencode: {

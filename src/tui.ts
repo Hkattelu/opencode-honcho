@@ -215,7 +215,7 @@ const statusMessage = (
     `Deployment: ${deployment}`,
     `Base URL: ${normalized.baseUrl}`,
     `API key: ${normalized.apiKey ? "set" : "not set"}`,
-    `Peer name: ${normalized.peerName || "not set"}`,
+    `Peer name: ${normalized.peerName || "user"}`,
     ...(liveStatus?.workspaceName ? [`Workspace: ${liveStatus.workspaceName}`] : []),
     ...(liveStatus?.openCodeSessionId ? [`OpenCode session: ${liveStatus.openCodeSessionId}`] : []),
     `Config path: ${globalSettingsPath()}`,
@@ -322,7 +322,7 @@ const openSetupConfirmation = async (
         api.ui.dialog.replace(() =>
           api.ui.DialogAlert({
             title: "Honcho configured",
-            message: [`Saved settings to ${configPath}`, ...summaryLines, `Peer name: ${peerName.trim() || "not set"}`].join(
+            message: [`Saved settings to ${configPath}`, ...summaryLines, `Peer name: ${peerName.trim() || "user"}`].join(
               "\n",
             ),
           }),
