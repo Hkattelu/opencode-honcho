@@ -17,6 +17,15 @@ const SHARED_CONFIG_PRESETS: Record<string, readonly string[]> = {
 }
 
 const INTERVIEW_PROMPT = "Is there anything Honcho should know about you in particular?"
+const MODE_EDITABLE_FIELD_PATHS = [
+  "apiKey",
+  "baseUrl",
+  "peerName",
+  "hosts.opencode.workspace",
+  "hosts.opencode.aiPeer",
+  "hosts.opencode.recallMode",
+  "hosts.opencode.sessionStrategy",
+] as const
 
 type GlobalSettings = {
   apiKey?: string
@@ -127,6 +136,8 @@ const resolveSharedConfigField = (config: Record<string, unknown>, field: string
   return canonical
 }
 
+const modeEditableFieldPaths = () => [...MODE_EDITABLE_FIELD_PATHS]
+
 const sharedConfigPresetOptions = (fieldPath: string, currentValue: unknown) => {
   const presetKey = fieldPath.split(".").at(-1)?.toLowerCase() || fieldPath.toLowerCase()
   if (SHARED_CONFIG_PRESETS[presetKey]) {
@@ -235,6 +246,7 @@ const settingsMessage = (settings: GlobalSettings) => {
 
 const saveSettings = async (partial: Partial<GlobalSettings>) => {
   const current = await readGlobalSettings()
+  const sharedRaw = (await readSharedConfig()) ?? {}
   const partialHost = partial.hosts?.opencode
   const nextApiKey =
     typeof partial.apiKey === "string"
@@ -248,7 +260,18 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
       : typeof current.peerName === "string" && current.peerName.trim()
         ? current.peerName.trim()
         : "user"
-  const next: GlobalSettings = {
+  const currentHosts = isRecord(sharedRaw.hosts) ? { ...sharedRaw.hosts } : {}
+  const currentOpenCodeHost = isRecord(currentHosts.opencode) ? currentHosts.opencode : {}
+  currentHosts.opencode = {
+    ...currentOpenCodeHost,
+    workspace: partialHost?.workspace ?? current.hosts?.opencode?.workspace ?? "opencode",
+    aiPeer: partialHost?.aiPeer ?? current.hosts?.opencode?.aiPeer ?? "opencode",
+    recallMode: partialHost?.recallMode ?? current.hosts?.opencode?.recallMode ?? "hybrid",
+    sessionStrategy: partialHost?.sessionStrategy ?? current.hosts?.opencode?.sessionStrategy ?? "per-directory",
+  }
+
+  const next: GlobalSettings & Record<string, unknown> = {
+    ...sharedRaw,
     baseUrl:
       typeof partial.baseUrl === "string"
         ? partial.baseUrl
@@ -256,16 +279,12 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
           ? current.baseUrl
           : DEFAULT_BASE_URL,
     peerName: nextPeerName,
-    apiKey: nextApiKey,
-    hosts: {
-      ...current.hosts,
-      opencode: {
-        workspace: partialHost?.workspace ?? current.hosts?.opencode?.workspace ?? "opencode",
-        aiPeer: partialHost?.aiPeer ?? current.hosts?.opencode?.aiPeer ?? "opencode",
-        recallMode: partialHost?.recallMode ?? current.hosts?.opencode?.recallMode ?? "hybrid",
-        sessionStrategy: partialHost?.sessionStrategy ?? current.hosts?.opencode?.sessionStrategy ?? "per-directory",
-      },
-    },
+    hosts: currentHosts,
+  }
+  if (typeof nextApiKey === "string") {
+    next.apiKey = nextApiKey
+  } else {
+    delete next.apiKey
   }
   return writeGlobalSettings(next)
 }
@@ -464,7 +483,7 @@ const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
     return
   }
 
-  const fieldPaths = listSharedConfigFields(config)
+  const fieldPaths = modeEditableFieldPaths()
   if (fieldPaths.length === 0) {
     api.ui.dialog.replace(() =>
       api.ui.DialogAlert({
@@ -483,8 +502,7 @@ const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
         value: fieldPath,
       })),
       onSelect: (option) => {
-        const canonicalField = resolveSharedConfigField(config, String(option.value))
-        void openModeValueDialog(api, config, canonicalField)
+        void openModeValueDialog(api, config, String(option.value))
       },
     }),
   )
@@ -652,6 +670,7 @@ export const __testing = {
   formatInterviewConclusion,
   interviewPrompt: INTERVIEW_PROMPT,
   normalizeSettings,
+  modeEditableFieldPaths,
   readSharedConfig,
   resolveSharedConfigField,
   saveSettings,

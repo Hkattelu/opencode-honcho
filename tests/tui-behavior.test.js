@@ -104,6 +104,20 @@ test("native TUI Honcho commands register slash aliases for setup, status, setti
   )
 })
 
+test("honcho mode only exposes top-level and hosts.opencode fields", () => {
+  assert.deepEqual(__testing.modeEditableFieldPaths(), [
+    "apiKey",
+    "baseUrl",
+    "peerName",
+    "hosts.opencode.workspace",
+    "hosts.opencode.aiPeer",
+    "hosts.opencode.recallMode",
+    "hosts.opencode.sessionStrategy",
+  ])
+  assert.equal(__testing.modeEditableFieldPaths().includes("hosts.claude_code.workspace"), false)
+  assert.equal(__testing.modeEditableFieldPaths().includes("hosts.other.aiPeer"), false)
+})
+
 test("shared config field resolution is case-insensitive and preserves canonical paths", () => {
   const field = __testing.resolveSharedConfigField(
     {

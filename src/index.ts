@@ -413,33 +413,6 @@ const mergeSettings = (...rawLayers: Array<Record<string, unknown>>): HonchoSett
   return merged
 }
 
-const persistedSettings = (settings: Record<string, unknown>) => {
-  const merged = mergeSettings(normalizeScopedSettings(settings))
-  const current = isRecord(settings) ? settings : {}
-  const persisted: Record<string, unknown> = { ...current }
-
-  persisted[LEGACY_API_KEY_FIELD] = merged.apiKey
-  persisted.peerName = merged.peerName
-  persisted.baseUrl = merged.baseUrl
-
-  delete persisted.workspace
-  delete persisted.aiPeer
-  delete persisted.recallMode
-  delete persisted.observation
-  delete persisted.observationMode
-  delete persisted.sessionStrategy
-  delete persisted.enabled
-  delete persisted.globalOverride
-  delete persisted.peerModel
-  delete persisted.writeFrequency
-  delete persisted.linkedHosts
-
-  const nextHosts = isRecord(persisted.hosts) ? { ...persisted.hosts } : {}
-  nextHosts.opencode = hostDefaults(merged)
-  persisted.hosts = nextHosts
-  return persisted
-}
-
 const setSettingValue = (target: Record<string, unknown>, fieldPath: string, value: unknown) => {
   const parts = fieldPath.split(".")
   const rootField = parts[0]
@@ -633,7 +606,7 @@ const writeSettings = async (
   settings: Record<string, unknown>,
 ) => {
   await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(persistedSettings(settings), null, 2)}\n`, "utf-8")
+  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
 }
 
 const currentUserName = () => "user"
@@ -669,37 +642,19 @@ const writeSharedGlobalSettings = async (configPath: string, settings: Record<st
 const ensureSharedGlobalSettings = async (configPath = sharedGlobalSettingsPath()) => {
   const sharedRaw = await readJsonFile(configPath)
   const currentShared = sharedRaw ?? {}
-  const sharedResolved = normalizeScopedSettings(currentShared)
-  const mergedHostSettings = mergeSettings(sharedResolved)
-  const mergedGlobalHostDefaults = hostDefaults(mergedHostSettings)
-  const next: Record<string, unknown> = { ...currentShared }
-  const nextHosts = isRecord(next.hosts) ? { ...next.hosts } : {}
-  const existingPeerName = typeof next.peerName === "string" ? next.peerName.trim() : ""
-  const existingApiKey = rootApiKey(currentShared)
+  const mergedHostSettings = mergeSettings(normalizeScopedSettings(currentShared))
+  let next: Record<string, unknown>
 
-  next.peerName = existingPeerName || currentUserName()
-  if (existingApiKey) {
-    next[LEGACY_API_KEY_FIELD] = existingApiKey
+  if (sharedRaw) {
+    next = currentShared
   } else {
-    delete next[LEGACY_API_KEY_FIELD]
-  }
-  next.baseUrl = typeof next.baseUrl === "string" && next.baseUrl.trim() ? next.baseUrl : mergedHostSettings.baseUrl
-
-  delete next.enabled
-  delete next.globalOverride
-  delete next.workspace
-  delete next.aiPeer
-  delete next.recallMode
-  delete next.observation
-  delete next.observationMode
-  delete next.peerModel
-  delete next.writeFrequency
-  delete next.sessionStrategy
-
-  nextHosts.opencode = hostDefaults(mergedHostSettings)
-  next.hosts = nextHosts
-
-  if (JSON.stringify(currentShared, null, 2) !== JSON.stringify(next, null, 2)) {
+    next = {
+      peerName: currentUserName(),
+      baseUrl: mergedHostSettings.baseUrl,
+      hosts: {
+        opencode: hostDefaults(mergedHostSettings),
+      },
+    }
     await writeSharedGlobalSettings(configPath, next)
   }
 

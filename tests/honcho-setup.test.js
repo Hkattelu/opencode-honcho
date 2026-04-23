@@ -314,29 +314,28 @@ test("honcho_status lets exported HONCHO_* values override ~/.honcho/config.json
   )
 })
 
-test("honcho_status preserves existing shared global config and adds hosts.opencode defaults without clobbering other hosts", async () => {
+test("honcho_status preserves existing shared global config without mutating the file", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-existing-global-config-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-existing-global-"))
   const sharedConfigDir = path.join(homeDir, ".honcho")
   const sharedConfigPath = path.join(sharedConfigDir, "config.json")
+  const initialConfig = {
+    apiKey: "existing-key",
+    peerName: "owner",
+    globalOverride: true,
+    workspace: "legacy-workspace",
+    hosts: {
+      claude_code: {
+        workspace: "claude_code",
+        aiPeer: "claude",
+      },
+    },
+  }
 
   await mkdir(sharedConfigDir, { recursive: true })
   await writeFile(
     sharedConfigPath,
-    JSON.stringify(
-      {
-        apiKey: "existing-key",
-        peerName: "alice",
-        hosts: {
-          claude_code: {
-            workspace: "claude_code",
-            aiPeer: "claude",
-          },
-        },
-      },
-      null,
-      2,
-    ),
+    JSON.stringify(initialConfig, null, 2),
   )
 
   await withEnv({ HOME: homeDir, USER: "adavya", XDG_CONFIG_HOME: undefined }, async () => {
@@ -346,27 +345,12 @@ test("honcho_status preserves existing shared global config and adds hosts.openc
 
     expect(status.configPath).toBe(sharedConfigPath)
     expect(status.workspace).toBe("opencode")
-    expect(persisted.apiKey).toBe("existing-key")
-    expect(persisted.peerName).toBe("alice")
-    expect(persisted.baseUrl).toBe("https://api.honcho.dev")
-    expect(persisted.workspace).toBeUndefined()
-    expect(persisted.aiPeer).toBeUndefined()
-    expect(persisted.globalOverride).toBeUndefined()
-    expect(persisted.recallMode).toBeUndefined()
-    expect(persisted.observation).toBeUndefined()
-    expect(persisted.peerModel).toBeUndefined()
-    expect(persisted.writeFrequency).toBeUndefined()
-    expect(persisted.sessionStrategy).toBeUndefined()
+    expect(persisted).toEqual(initialConfig)
     expect(persisted.hosts.claude_code).toEqual({
       workspace: "claude_code",
       aiPeer: "claude",
     })
-    expect(persisted.hosts.opencode).toEqual({
-      aiPeer: "opencode",
-      workspace: "opencode",
-      recallMode: "hybrid",
-      sessionStrategy: "per-directory",
-    })
+    expect(persisted.hosts.opencode).toBeUndefined()
   })
 })
 
@@ -462,6 +446,44 @@ test("honcho_set_config rejects removed and deprecated config fields", async () 
       expect(result.ok).toBe(false)
       expect(result.error).toMatch(new RegExp(`Unknown setting '${field}'`))
     }
+  })
+})
+
+test("honcho_set_config updates requested field without deleting unrelated top-level keys", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-preserve-top-level-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-preserve-top-level-"))
+  const sharedConfigDir = path.join(homeDir, ".honcho")
+  const sharedConfigPath = path.join(sharedConfigDir, "config.json")
+
+  await mkdir(sharedConfigDir, { recursive: true })
+  await writeFile(
+    sharedConfigPath,
+    JSON.stringify(
+      {
+        apiKey: "existing-key",
+        peerName: "alice",
+        globalOverride: true,
+        workspace: "legacy-workspace",
+      },
+      null,
+      2,
+    ),
+  )
+
+  await withEnv({ HOME: homeDir, USER: "adavya", XDG_CONFIG_HOME: undefined }, async () => {
+    const hooks = await createPluginHarness(rootDir)
+    const result = JSON.parse(
+      await hooks.tool.honcho_set_config.execute(
+        { field: "recallMode", value: "tools" },
+        toolContext(rootDir),
+      ),
+    )
+    const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
+
+    expect(result.ok).toBe(true)
+    expect(persisted.globalOverride).toBe(true)
+    expect(persisted.workspace).toBe("legacy-workspace")
+    expect(persisted.hosts.opencode?.recallMode).toBe("tools")
   })
 })
 
