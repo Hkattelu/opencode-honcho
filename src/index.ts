@@ -57,6 +57,7 @@ type SessionState = {
   stableContext: string | null
   cachedPromptContext: string | null
   lastInjectedContext: string | null
+  lastStableContextRefreshAt: number | null
   recentConclusions: string[]
   conclusionFingerprints: Set<string>
   capturedAssistantMessageIds: Set<string>
@@ -510,6 +511,16 @@ const shouldRefreshPromptContext = (
   return Date.now() - state.lastPromptRefreshAt >= settings.ttlSeconds * 1000
 }
 
+const shouldInjectStableContext = (state: SessionState, settings: ContextRefreshSettings) => {
+  if (!state.lastStableContextRefreshAt) {
+    return true
+  }
+  if (state.promptCount >= settings.messageThreshold) {
+    return true
+  }
+  return Date.now() - state.lastStableContextRefreshAt >= settings.ttlSeconds * 1000
+}
+
 const parseSettingField = (field: string) => {
   if (!SETTING_FIELD_PATHS.has(field)) {
     throw new Error(`Unknown setting '${field}'. Allowed fields: ${listAllowedSettingPaths().join(", ")}`)
@@ -955,6 +966,7 @@ const createSessionState = (): SessionState => ({
   stableContext: null,
   cachedPromptContext: null,
   lastInjectedContext: null,
+  lastStableContextRefreshAt: null,
   recentConclusions: [],
   conclusionFingerprints: new Set<string>(),
   capturedAssistantMessageIds: new Set<string>(),
@@ -1233,6 +1245,13 @@ export const createHonchoRuntimePlugin =
       }
 
       state.stableContext = sections.length > 0 ? sections.join("\n\n") : null
+      return (
+        userContextResult.status === "fulfilled" ||
+        agentContextResult.status === "fulfilled" ||
+        summariesResult.status === "fulfilled" ||
+        (dialecticEnabled && userChatResult.status === "fulfilled") ||
+        (dialecticEnabled && agentChatResult.status === "fulfilled")
+      )
     }
 
     const refreshPromptContext = async (runtime: ActiveRuntime, state: SessionState, query: string) => {
@@ -1370,17 +1389,30 @@ export const createHonchoRuntimePlugin =
           return
         }
         const query = extractPromptQuery(input)
-        if (shouldSkipContextRetrieval(query, INTERNAL_CONTEXT_REFRESH)) {
+        const trimmedQuery = query.trim()
+        const hasQuery = trimmedQuery.length > 0
+        const state = getState(deriveSessionStateKey(handle))
+        const shouldInjectStable = !hasQuery && shouldInjectStableContext(state, INTERNAL_CONTEXT_REFRESH)
+        const shouldSkip =
+          (hasQuery && shouldSkipContextRetrieval(trimmedQuery, INTERNAL_CONTEXT_REFRESH)) ||
+          (!hasQuery && !shouldInjectStable)
+        if (shouldSkip) {
           return
         }
         await withRuntime(input, async (runtime) => {
           const state = getState(deriveSessionStateKey(runtime))
-          if (!state.stableContext) {
-            await hydrateSessionStartContext(runtime, state)
+          if (!state.stableContext || shouldInjectStable) {
+            const stableContextHydrated = await hydrateSessionStartContext(runtime, state)
+            if (stableContextHydrated) {
+              state.lastStableContextRefreshAt = Date.now()
+            }
+            if (shouldInjectStable && stableContextHydrated) {
+              state.promptCount = 0
+            }
           }
           const promptContext =
-            runtime.config.recallMode === "context" || runtime.config.recallMode === "hybrid"
-              ? await refreshPromptContext(runtime, state, query)
+            hasQuery && (runtime.config.recallMode === "context" || runtime.config.recallMode === "hybrid")
+              ? await refreshPromptContext(runtime, state, trimmedQuery)
               : null
           const compiledSections = [state.stableContext, promptContext].filter(
             (value): value is string => Boolean(value && value.trim()),
