@@ -198,7 +198,8 @@ const isLocalBaseUrl = (value: string) => {
   }
 }
 
-const hasConfiguredAuth = (settings: HonchoSettings) => Boolean(settings.apiKey) || isLocalBaseUrl(settings.baseUrl)
+const hasConfiguredAuth = (settings: HonchoSettings) =>
+  Boolean(settings.apiKey) || settings.baseUrl !== DEFAULT_SETTINGS.baseUrl
 
 const readTextPart = (part: unknown) =>
   isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : null
@@ -1486,6 +1487,7 @@ export const createHonchoRuntimePlugin =
                 if (!persistedFields.includes("peerName")) {
                   persistedFields.push("peerName")
                 }
+                nextGlobal.baseUrl = effectiveBaseUrl
                 const nextResolved = mergeSettings(
                   normalizeScopedSettings(globalPersisted),
                   {
@@ -1500,7 +1502,11 @@ export const createHonchoRuntimePlugin =
                 await writeSharedGlobalSettings(handle.globalConfigPath, nextGlobal)
               }
 
-              const configured = Boolean(effectiveApiKey) || isLocalBaseUrl(effectiveBaseUrl)
+              const configured = hasConfiguredAuth({
+                ...handle.config,
+                apiKey: effectiveApiKey,
+                baseUrl: effectiveBaseUrl,
+              })
               return JSON.stringify(
                 {
                   ok: configured,
