@@ -17,13 +17,13 @@ Give OpenCode long-term memory that survives context wipes, session restarts, an
 OpenCode installs the Honcho plugin and adds it to your global OpenCode config.
 
 ```bash
-opencode plugin @honcho-ai/opencode-honcho --global
+opencode plugin "@honcho-ai/opencode-honcho" --global
 ```
 
 To update an existing plugin install:
 
 ```bash
-opencode plugin @honcho-ai/opencode-honcho --force
+opencode plugin "@honcho-ai/opencode-honcho" --force
 ```
 
 This command expects the `opencode` CLI to already be installed and available on your `PATH`.
