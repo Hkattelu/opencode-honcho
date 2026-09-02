@@ -1,20 +1,31 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
 import path from "node:path"
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { Honcho } from "@honcho-ai/sdk"
+import { executeOpenCodeImport, planOpenCodeImport } from "./import.js"
+import {
+  DEFAULT_SETTINGS,
+  SETTING_ENUMS,
+  directionalKeepFollowUp,
+  getNestedValue,
+  isLocalBaseUrl,
+  isObservationMode,
+  isRecord,
+  needsObservationUpgradePrompt,
+  observationUpgradeNotice,
+  resolveSessionPeerIds,
+  sharedGlobalSettingsPath,
+  unifiedImportFollowUp,
+  type ObservationMode,
+  type RecallMode,
+  type SessionStrategy,
+} from "./core.js"
 
 const PACKAGE_ID = "@honcho-ai/opencode-honcho"
-const DEFAULT_BASE_URL = "https://api.honcho.dev"
-const SHARED_SETTINGS_DIR_NAME = ".honcho"
-const SHARED_SETTINGS_FILE_NAME = "config.json"
 
-const SHARED_CONFIG_PRESETS: Record<string, readonly string[]> = {
-  recallmode: ["hybrid", "context", "tools"],
-  observationmode: ["directional"],
-  peermodel: ["classic", "hierarchical"],
-  sessionstrategy: ["per-repo", "per-directory", "per-session", "global", "git-branch", "chat-instance"],
-  dialecticreasoninglevel: ["minimal", "low", "medium", "high", "max"],
-}
+const SHARED_CONFIG_PRESETS: Record<string, readonly string[]> = Object.fromEntries(
+  Object.entries(SETTING_ENUMS).map(([key, values]) => [key.toLowerCase(), values]),
+)
 
 const MODE_EDITABLE_FIELD_PATHS = [
   "apiKey",
@@ -23,6 +34,8 @@ const MODE_EDITABLE_FIELD_PATHS = [
   "hosts.opencode.workspace",
   "hosts.opencode.aiPeer",
   "hosts.opencode.recallMode",
+  "hosts.opencode.observationMode",
+  "hosts.opencode.agentObserveMe",
   "hosts.opencode.sessionStrategy",
 ] as const
 
@@ -34,33 +47,17 @@ type GlobalSettings = {
     opencode?: {
       workspace?: string
       aiPeer?: string
-      recallMode?: "hybrid" | "context" | "tools"
-      sessionStrategy?: "per-repo" | "per-directory" | "per-session" | "global" | "git-branch" | "chat-instance"
+      recallMode?: RecallMode
+      observationMode?: ObservationMode
+      agentObserveMe?: boolean
+      sessionStrategy?: SessionStrategy
+      removeUserPrefix?: boolean
     }
   }
 }
 
-const globalSettingsPath = () =>
-  path.join(process.env.HOME || process.env.USERPROFILE || homedir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME)
-
-const sharedConfigPath = () =>
-  path.join(process.env.HOME || process.env.USERPROFILE || homedir(), SHARED_SETTINGS_DIR_NAME, SHARED_SETTINGS_FILE_NAME)
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-
-const isLocalBaseUrl = (value: string) => {
-  if (!value.trim()) return false
-  try {
-    const url = new URL(value)
-    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
-  } catch {
-    return false
-  }
-}
-
 const readGlobalSettings = async (): Promise<GlobalSettings> => {
-  const configPath = globalSettingsPath()
+  const configPath = sharedGlobalSettingsPath()
   try {
     const raw = await readFile(configPath, "utf-8")
     const parsed = JSON.parse(raw)
@@ -74,7 +71,7 @@ const readGlobalSettings = async (): Promise<GlobalSettings> => {
 }
 
 const readSharedConfig = async (): Promise<Record<string, unknown> | null> => {
-  const configPath = sharedConfigPath()
+  const configPath = sharedGlobalSettingsPath()
   try {
     const raw = await readFile(configPath, "utf-8")
     const parsed = JSON.parse(raw)
@@ -91,7 +88,7 @@ const readSharedConfig = async (): Promise<Record<string, unknown> | null> => {
 }
 
 const writeSharedConfig = async (settings: Record<string, unknown>) => {
-  const configPath = sharedConfigPath()
+  const configPath = sharedGlobalSettingsPath()
   await mkdir(path.dirname(configPath), { recursive: true })
   await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
   return configPath
@@ -105,12 +102,6 @@ const listSharedConfigFields = (value: Record<string, unknown>, prefix = ""): st
     }
     return [nextKey]
   })
-
-const getNestedValue = (value: Record<string, unknown>, fieldPath: string): unknown =>
-  fieldPath.split(".").reduce<unknown>((current, part) => {
-    if (!isRecord(current)) return undefined
-    return current[part]
-  }, value)
 
 const setNestedValue = (value: Record<string, unknown>, fieldPath: string, nextValue: unknown) => {
   const parts = fieldPath.split(".")
@@ -130,7 +121,7 @@ const resolveSharedConfigField = (config: Record<string, unknown>, field: string
     (candidate) => candidate.toLowerCase() === field.trim().toLowerCase(),
   )
   if (!canonical) {
-    throw new Error(`Field '${field}' does not exist in ${sharedConfigPath()}.`)
+    throw new Error(`Field '${field}' does not exist in ${sharedGlobalSettingsPath()}.`)
   }
   return canonical
 }
@@ -164,7 +155,7 @@ const parseSharedConfigValue = (currentValue: unknown, rawValue: string) => {
 }
 
 const writeGlobalSettings = async (settings: GlobalSettings) => {
-  const configPath = globalSettingsPath()
+  const configPath = sharedGlobalSettingsPath()
   await mkdir(path.dirname(configPath), { recursive: true })
   await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
   return configPath
@@ -174,7 +165,7 @@ const normalizeSettings = (settings: GlobalSettings) => ({
   baseUrl:
     typeof settings.baseUrl === "string" && settings.baseUrl.trim()
       ? settings.baseUrl
-      : DEFAULT_BASE_URL,
+      : DEFAULT_SETTINGS.baseUrl,
   apiKey:
     typeof settings.apiKey === "string" && settings.apiKey.trim() ? settings.apiKey.trim() : "",
   peerName: typeof settings.peerName === "string" ? settings.peerName.trim() : "",
@@ -207,7 +198,7 @@ const statusMessage = (
   const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl)
   const deployment = isLocalBaseUrl(normalized.baseUrl)
     ? "Local / self-hosted"
-    : normalized.baseUrl === DEFAULT_BASE_URL
+    : normalized.baseUrl === DEFAULT_SETTINGS.baseUrl
       ? "Honcho Cloud"
       : "Custom endpoint"
   return [
@@ -218,24 +209,104 @@ const statusMessage = (
     `Peer name: ${normalized.peerName || "user"}`,
     ...(liveStatus?.workspaceName ? [`Workspace: ${liveStatus.workspaceName}`] : []),
     ...(liveStatus?.openCodeSessionId ? [`OpenCode session: ${liveStatus.openCodeSessionId}`] : []),
-    `Config path: ${globalSettingsPath()}`,
+    `Config path: ${sharedGlobalSettingsPath()}`,
     "",
     configured ? "Honcho is ready for OpenCode." : "Run /honcho:setup to finish configuration.",
+    ...(configured && needsObservationUpgradePrompt(settings as Record<string, unknown>)
+      ? ["", observationUpgradeNotice()]
+      : []),
   ].join("\n")
 }
 
 const settingsMessage = (settings: GlobalSettings) => {
   const host = settings.hosts?.opencode || {}
   return [
-    `Config path: ${globalSettingsPath()}`,
+    `Config path: ${sharedGlobalSettingsPath()}`,
     `API key: ${settings.apiKey?.trim() ? "set" : "not set"}`,
     `Peer name: ${settings.peerName?.trim() || "user"}`,
-    `Base URL: ${settings.baseUrl?.trim() || DEFAULT_BASE_URL}`,
-    `Workspace: ${host.workspace || "opencode"}`,
-    `AI peer: ${host.aiPeer || "opencode"}`,
-    `Recall mode: ${host.recallMode || "hybrid"}`,
-    `Session strategy: ${host.sessionStrategy || "per-directory"}`,
+    `Base URL: ${settings.baseUrl?.trim() || DEFAULT_SETTINGS.baseUrl}`,
+    `Workspace: ${host.workspace || DEFAULT_SETTINGS.workspace}`,
+    `AI peer: ${host.aiPeer || DEFAULT_SETTINGS.aiPeer}`,
+    `Recall mode: ${host.recallMode || DEFAULT_SETTINGS.recallMode}`,
+    `Observation mode: ${host.observationMode || DEFAULT_SETTINGS.observationMode}`,
+    `Agent observe me: ${host.agentObserveMe === true ? "true" : "false"}`,
+    `Session strategy: ${host.sessionStrategy || DEFAULT_SETTINGS.sessionStrategy}`,
+    ...(!isObservationMode(settings.hosts?.opencode?.observationMode) && settings.hosts?.opencode
+      ? ["", observationUpgradeNotice()]
+      : []),
   ].join("\n")
+}
+
+const persistHostObservationMode = async (mode: ObservationMode) => {
+  const config = (await readSharedConfig()) ?? {}
+  const hosts = isRecord(config.hosts) ? { ...config.hosts } : {}
+  const host = isRecord(hosts.opencode) ? hosts.opencode : {}
+  hosts.opencode = { ...host, observationMode: mode }
+  config.hosts = hosts
+  return writeSharedConfig(config)
+}
+
+const observationUpgradeOptions = () => [
+  {
+    title: "Switch to unified",
+    value: "unified",
+    description: "shared self-collection",
+  },
+  {
+    title: "Keep directional",
+    value: "directional",
+    description: "split memory between agents",
+  },
+]
+
+const openObservationUpgradeDialog = (
+  api: Parameters<TuiPlugin>[0],
+  followUpLines: string[],
+  title = "New: Honcho observation mode!",
+) => {
+  const persistThenAlert = async (mode: ObservationMode) => {
+    const configPath = await persistHostObservationMode(mode)
+    const extra = mode === "unified" ? unifiedImportFollowUp() : directionalKeepFollowUp()
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: mode === "unified" ? "Switched to unified" : "Keeping directional",
+        message: [
+          ...followUpLines,
+          followUpLines.length > 0 ? "" : null,
+          `Saved observationMode=${mode} to ${configPath}`,
+          extra,
+        ]
+          .filter((line): line is string => typeof line === "string")
+          .join("\n"),
+      }),
+    )
+  }
+
+  api.ui.dialog.replace(() =>
+    api.ui.DialogConfirm({
+      title,
+      message:
+        "Unified: one self-collection, you can share with other unified agents (new default). Directional: keeps Honcho memory specific to your OpenCode agent.\n\nConfirm = unified. Cancel = keep directional.",
+      onConfirm: () => {
+        void persistThenAlert("unified")
+      },
+      onCancel: () => {
+        void persistThenAlert("directional")
+      },
+    }),
+  )
+}
+
+const maybePromptObservationUpgrade = async (api: Parameters<TuiPlugin>[0]) => {
+  try {
+    const settings = await readGlobalSettings()
+    const configured = Boolean(settings.apiKey?.trim()) || isLocalBaseUrl(settings.baseUrl || "")
+    const raw = await readSharedConfig()
+    if (!configured || !needsObservationUpgradePrompt(raw)) return
+    openObservationUpgradeDialog(api, [])
+  } catch {
+    return
+  }
 }
 
 const saveSettings = async (partial: Partial<GlobalSettings>) => {
@@ -258,10 +329,10 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
   const currentOpenCodeHost = isRecord(currentHosts.opencode) ? currentHosts.opencode : {}
   currentHosts.opencode = {
     ...currentOpenCodeHost,
-    workspace: partialHost?.workspace ?? current.hosts?.opencode?.workspace ?? "opencode",
-    aiPeer: partialHost?.aiPeer ?? current.hosts?.opencode?.aiPeer ?? "opencode",
-    recallMode: partialHost?.recallMode ?? current.hosts?.opencode?.recallMode ?? "hybrid",
-    sessionStrategy: partialHost?.sessionStrategy ?? current.hosts?.opencode?.sessionStrategy ?? "per-directory",
+    workspace: partialHost?.workspace ?? current.hosts?.opencode?.workspace ?? DEFAULT_SETTINGS.workspace,
+    aiPeer: partialHost?.aiPeer ?? current.hosts?.opencode?.aiPeer ?? DEFAULT_SETTINGS.aiPeer,
+    recallMode: partialHost?.recallMode ?? current.hosts?.opencode?.recallMode ?? DEFAULT_SETTINGS.recallMode,
+    sessionStrategy: partialHost?.sessionStrategy ?? current.hosts?.opencode?.sessionStrategy ?? DEFAULT_SETTINGS.sessionStrategy,
   }
 
   const next: GlobalSettings & Record<string, unknown> = {
@@ -271,7 +342,7 @@ const saveSettings = async (partial: Partial<GlobalSettings>) => {
         ? partial.baseUrl
         : typeof current.baseUrl === "string"
           ? current.baseUrl
-          : DEFAULT_BASE_URL,
+          : DEFAULT_SETTINGS.baseUrl,
     peerName: nextPeerName,
     hosts: currentHosts,
   }
@@ -304,6 +375,142 @@ const openSettingsDialog = async (api: Parameters<TuiPlugin>[0]) => {
   )
 }
 
+const importConfigFromSettings = (settings: GlobalSettings) => {
+  const host = settings.hosts?.opencode || {}
+  const workspaceId = (host.workspace || DEFAULT_SETTINGS.workspace).trim() || DEFAULT_SETTINGS.workspace
+  const aiPeer = host.aiPeer || DEFAULT_SETTINGS.aiPeer
+  const { userPeerId, agentPeerId } = resolveSessionPeerIds(
+    settings.peerName || "user",
+    aiPeer,
+    host.removeUserPrefix === true,
+  )
+  return {
+    apiKey: settings.apiKey || "",
+    baseUrl: settings.baseUrl || DEFAULT_SETTINGS.baseUrl,
+    workspaceId,
+    userPeerId,
+    agentPeerId,
+    sessionStrategy: host.sessionStrategy || DEFAULT_SETTINGS.sessionStrategy,
+    agentObserveMe: host.agentObserveMe === true,
+  }
+}
+
+const formatImportPreview = (plan: Awaited<ReturnType<typeof planOpenCodeImport>>) => {
+  const lines = [
+    `Source: ${plan.source}`,
+    `Window: last ${plan.days} days`,
+    `Ready to import: ${plan.sessionCount} session(s), ${plan.messageCount} message(s)`,
+    `Already imported: ${plan.alreadyImportedCount}`,
+    `Skipped empty: ${plan.skippedCount}`,
+    "",
+  ]
+  for (const session of plan.sessions.filter((item) => !item.skippedReason).slice(0, 12)) {
+    lines.push(`- ${session.title} (${session.messageCount} msg)`)
+  }
+  if (plan.sessionCount > 12) lines.push(`- … and ${plan.sessionCount - 12} more`)
+  return lines.join("\n")
+}
+
+const openImportDialog = async (api: Parameters<TuiPlugin>[0]) => {
+  const settings = await readGlobalSettings()
+  const configured = Boolean(settings.apiKey?.trim()) || isLocalBaseUrl(settings.baseUrl || "")
+  if (!configured) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho import",
+        message: "Run /honcho:setup before importing local OpenCode transcripts.",
+      }),
+    )
+    return
+  }
+
+  const config = importConfigFromSettings(settings)
+  let plan: Awaited<ReturnType<typeof planOpenCodeImport>>
+  try {
+    plan = await planOpenCodeImport({
+      client: api.client,
+      workspaceId: config.workspaceId,
+      sessionStrategy: config.sessionStrategy,
+      agentPeerId: config.agentPeerId,
+    })
+  } catch (error) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho import",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    )
+    return
+  }
+
+  const preview = formatImportPreview(plan)
+  if (plan.sessionCount === 0) {
+    api.ui.dialog.replace(() =>
+      api.ui.DialogAlert({
+        title: "Honcho import",
+        message: `${preview}\n\nNothing new to import.`,
+      }),
+    )
+    return
+  }
+
+  api.ui.dialog.replace(() =>
+    api.ui.DialogSelect({
+      title: "Import local OpenCode transcripts into Honcho?",
+      flat: true,
+      options: [
+        { title: "Preview only", value: "preview", description: "Do not upload" },
+        { title: "Upload now", value: "upload", description: "Sends conversation content to Honcho" },
+      ],
+      onSelect: (option) => {
+        if (option.value !== "upload") {
+          api.ui.dialog.replace(() =>
+            api.ui.DialogAlert({
+              title: "Honcho import preview",
+              message: preview,
+            }),
+          )
+          return
+        }
+        void (async () => {
+          try {
+            const honcho = new Honcho({
+              apiKey: config.apiKey || undefined,
+              baseURL: config.baseUrl || undefined,
+              workspaceId: config.workspaceId,
+            })
+            const result = await executeOpenCodeImport({
+              client: api.client,
+              workspaceId: config.workspaceId,
+              sessionStrategy: config.sessionStrategy,
+              agentPeerId: config.agentPeerId,
+              honcho,
+              userPeerId: config.userPeerId,
+              agentObserveMe: config.agentObserveMe,
+            })
+            api.ui.dialog.replace(() =>
+              api.ui.DialogAlert({
+                title: "Honcho import",
+                message: [
+                  `Imported ${result.uploadedMessages} message(s) across ${result.uploadedSessions} session(s) into ${config.workspaceId}.`,
+                  result.errors.length > 0 ? `${result.errors.length} session(s) failed.` : "Honcho will reason over them; no restart needed.",
+                ].join("\n"),
+              }),
+            )
+          } catch (error) {
+            api.ui.dialog.replace(() =>
+              api.ui.DialogAlert({
+                title: "Honcho import failed",
+                message: error instanceof Error ? error.message : String(error),
+              }),
+            )
+          }
+        })()
+      },
+    }),
+  )
+}
+
 const openSetupConfirmation = async (
   api: Parameters<TuiPlugin>[0],
   partial: Partial<GlobalSettings>,
@@ -319,12 +526,18 @@ const openSetupConfirmation = async (
           ...partial,
           peerName: peerName.trim(),
         })
+        const summary = [`Saved settings to ${configPath}`, ...summaryLines, `Peer name: ${peerName.trim() || "user"}`]
+        const raw = await readSharedConfig()
+        const settings = await readGlobalSettings()
+        const configured = Boolean(settings.apiKey?.trim()) || isLocalBaseUrl(settings.baseUrl || "")
+        if (configured && needsObservationUpgradePrompt(raw)) {
+          openObservationUpgradeDialog(api, summary)
+          return
+        }
         api.ui.dialog.replace(() =>
           api.ui.DialogAlert({
             title: "Honcho configured",
-            message: [`Saved settings to ${configPath}`, ...summaryLines, `Peer name: ${peerName.trim() || "user"}`].join(
-              "\n",
-            ),
+            message: summary.join("\n"),
           }),
         )
       },
@@ -385,9 +598,9 @@ const openCloudApiKeyPrompt = (api: Parameters<TuiPlugin>[0]) => {
           api,
           {
             apiKey: apiKey.trim(),
-            baseUrl: DEFAULT_BASE_URL,
+            baseUrl: DEFAULT_SETTINGS.baseUrl,
           },
-          [`Base URL: ${DEFAULT_BASE_URL}`, `API key: ${apiKey.trim() ? "set" : "not set"}`],
+          [`Base URL: ${DEFAULT_SETTINGS.baseUrl}`, `API key: ${apiKey.trim() ? "set" : "not set"}`],
         )
       },
       onCancel: () => api.ui.dialog.clear(),
@@ -409,10 +622,19 @@ const openModeValueDialog = async (
       const nextValue = parseSharedConfigValue(currentValue, rawValue)
       setNestedValue(nextConfig, fieldPath, nextValue)
       const configPath = await writeSharedConfig(nextConfig)
+      const importHint =
+        fieldPath.endsWith("observationMode") && nextValue === "unified" ? unifiedImportFollowUp() : null
       api.ui.dialog.replace(() =>
         api.ui.DialogAlert({
-      title: "Honcho config updated",
-          message: [`Saved settings to ${configPath}`, `Field: ${fieldPath}`, `Value: ${String(nextValue)}`].join("\n"),
+          title: "Honcho config updated",
+          message: [
+            `Saved settings to ${configPath}`,
+            `Field: ${fieldPath}`,
+            `Value: ${String(nextValue)}`,
+            importHint,
+          ]
+            .filter((line): line is string => typeof line === "string")
+            .join("\n"),
         }),
       )
     } catch (error) {
@@ -426,14 +648,20 @@ const openModeValueDialog = async (
   }
 
   if (presetOptions.length > 0) {
+    const selectOptions =
+      fieldPath.endsWith("observationMode")
+        ? observationUpgradeOptions()
+        : presetOptions.map((option) => ({
+            title: option,
+            value: option,
+          }))
     api.ui.dialog.replace(() =>
       api.ui.DialogSelect({
-        title: `What should it be set to: ${presetOptions.join(", ")}`,
+        title: fieldPath.endsWith("observationMode")
+          ? "Honcho observation mode"
+          : `What should it be set to: ${presetOptions.join(", ")}`,
         flat: true,
-        options: presetOptions.map((option) => ({
-          title: option,
-          value: option,
-        })),
+        options: selectOptions,
         onSelect: (option) => {
           void persistValue(String(option.value))
         },
@@ -471,7 +699,7 @@ const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
     api.ui.dialog.replace(() =>
       api.ui.DialogAlert({
         title: "Honcho config missing",
-        message: `The config does not exist at ${sharedConfigPath()}.`,
+        message: `The config does not exist at ${sharedGlobalSettingsPath()}.`,
       }),
     )
     return
@@ -482,7 +710,7 @@ const openModeDialog = async (api: Parameters<TuiPlugin>[0]) => {
     api.ui.dialog.replace(() =>
       api.ui.DialogAlert({
         title: "Honcho config empty",
-        message: `No editable fields were found in ${sharedConfigPath()}.`,
+        message: `No editable fields were found in ${sharedGlobalSettingsPath()}.`,
       }),
     )
     return
@@ -577,10 +805,23 @@ const buildCommands = (api: Parameters<TuiPlugin>[0]) => [
       void openModeDialog(api)
     },
   },
+  {
+    title: "Honcho Import",
+    value: "honcho.import",
+    description: "Preview or import local OpenCode transcripts into Honcho",
+    category: "Honcho",
+    slash: {
+      name: "honcho:import",
+    },
+    onSelect: () => {
+      void openImportDialog(api)
+    },
+  },
 ]
 
 const tui: TuiPlugin = async (api) => {
-  api.command.register(() => buildCommands(api))
+  api.command?.register(() => buildCommands(api))
+  void maybePromptObservationUpgrade(api)
 }
 
 const plugin: TuiPluginModule & { id: string } = {
@@ -597,7 +838,7 @@ export const __testing = {
   resolveSharedConfigField,
   saveSettings,
   settingsMessage,
-  sharedConfigPath,
+  sharedConfigPath: sharedGlobalSettingsPath,
   sharedConfigPresetOptions,
   statusMessage,
   validateCloudApiKey,

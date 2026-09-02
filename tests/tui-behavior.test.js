@@ -63,13 +63,16 @@ test("settings message shows config values separately from status messaging", ()
         aiPeer: "opencode",
         recallMode: "hybrid",
         sessionStrategy: "per-directory",
+        observationMode: "directional",
       },
     },
   })
 
   assert.match(message, /Config path:/)
-  assert.match(message, /Peer name: user/)
-  assert.doesNotMatch(message, /Observation mode:/)
+  assert.match(message, /Recall mode: hybrid/)
+  assert.match(message, /Observation mode: directional/)
+  assert.match(message, /Agent observe me: false/)
+  assert.doesNotMatch(message, /Observation:/)
 })
 
 test("status and settings messages are distinct surfaces", () => {
@@ -83,6 +86,7 @@ test("status and settings messages are distinct surfaces", () => {
         aiPeer: "opencode",
         recallMode: "hybrid",
         sessionStrategy: "per-directory",
+        observationMode: "unified",
       },
     },
   }
@@ -97,10 +101,11 @@ test("native TUI Honcho commands register slash aliases for setup, status, setti
     "honcho.status",
     "honcho.settings",
     "honcho.config",
+    "honcho.import",
   ])
   assert.deepEqual(
     commands.map((command) => command.slash?.name),
-    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:config"],
+    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:config", "honcho:import"],
   )
 })
 
@@ -112,9 +117,10 @@ test("honcho config only exposes top-level and hosts.opencode fields", () => {
     "hosts.opencode.workspace",
     "hosts.opencode.aiPeer",
     "hosts.opencode.recallMode",
+    "hosts.opencode.observationMode",
+    "hosts.opencode.agentObserveMe",
     "hosts.opencode.sessionStrategy",
   ])
-  assert.equal(__testing.modeEditableFieldPaths().includes("hosts.claude_code.workspace"), false)
   assert.equal(__testing.modeEditableFieldPaths().includes("hosts.other.aiPeer"), false)
 })
 
@@ -138,7 +144,11 @@ test("shared config preset options expose enum and boolean values", () => {
     "context",
     "tools",
   ])
-  assert.deepEqual(__testing.sharedConfigPresetOptions("observationMode", "directional"), ["directional"])
+  assert.deepEqual(__testing.sharedConfigPresetOptions("observationMode", "directional"), [
+    "unified",
+    "directional",
+  ])
+  assert.deepEqual(__testing.sharedConfigPresetOptions("agentObserveMe", true), ["true", "false"])
   assert.deepEqual(__testing.sharedConfigPresetOptions("saveMessages", true), ["true", "false"])
 })
 
