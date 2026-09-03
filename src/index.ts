@@ -221,6 +221,12 @@ const TRIVIAL_SHELL_COMMANDS = [
 const SENSITIVE_ARG_PATTERN =
   /(api[-_]?key|apikey|secret|password|passwd|passphrase|authorization|cookie|credential|private[-_]?key|bearer|token|auth)/i
 
+// Flag names that can carry credentials even though they don't spell it out
+// (e.g. curl -u / --user, tools that use -p for --password). Conservative on
+// purpose.
+const SENSITIVE_SHORT_FLAGS = new Set(["u", "p"])
+const SENSITIVE_LONG_FLAG_PATTERN = /^(user|username|userid)/
+
 // user:password@host style URLs embed credentials directly.
 const CREDENTIAL_URL_PATTERN = /^[a-z][a-z0-9+.-]*:\/\/[^\s/@]+:[^\s/@]+@/i
 
@@ -230,8 +236,19 @@ const shellTokenMayCarrySecret = (token: string): boolean => {
   if (CREDENTIAL_URL_PATTERN.test(token)) {
     return true
   }
-  // Covers --api-key style flags and FOO=bar env assignments; for assignments
-  // only the name is checked, so DEBUG=1 survives but API_KEY=... does not.
+  if (/^-[A-Za-z]/.test(token) && SENSITIVE_SHORT_FLAGS.has(token.slice(1, 2))) {
+    return true
+  }
+  if (/^--/.test(token) && SENSITIVE_LONG_FLAG_PATTERN.test(token.slice(2).split("=")[0])) {
+    return true
+  }
+  if (ENV_ASSIGNMENT_PATTERN.test(token)) {
+    // For assignments only the name is checked, so DEBUG=1 survives but
+    // API_KEY=... does not.
+    return SENSITIVE_ARG_PATTERN.test(token.slice(0, token.indexOf("=")))
+  }
+  // Covers --api-key style flags and bare value tokens like
+  // 'Authorization: Bearer ...' passed after a generic -H flag.
   return SENSITIVE_ARG_PATTERN.test(token.replace(/^--?/, ""))
 }
 
@@ -248,10 +265,15 @@ export const redactShellCommand = (cmd: string): string => {
   while (executableIndex < tokens.length - 1 && ENV_ASSIGNMENT_PATTERN.test(tokens[executableIndex])) {
     executableIndex += 1
   }
-  const executable = tokens[executableIndex]
-  const mayContainSecret = tokens.some(
-    (token, index) => index !== executableIndex && shellTokenMayCarrySecret(token),
-  )
+  const executableToken = tokens[executableIndex]
+  // An assignment can end up in executable position (a lone API_KEY=secret, or
+  // `export FOO=bar`); keep only its name so the value never reaches Honcho.
+  const executable = ENV_ASSIGNMENT_PATTERN.test(executableToken)
+    ? executableToken.slice(0, executableToken.indexOf("="))
+    : executableToken
+  const mayContainSecret =
+    (executable !== executableToken && SENSITIVE_ARG_PATTERN.test(executable)) ||
+    tokens.some((token, index) => index !== executableIndex && shellTokenMayCarrySecret(token))
   return mayContainSecret ? `${executable} (arguments redacted)` : cmd
 }
 
@@ -274,10 +296,20 @@ export const summarizeToolExecution = (toolName: string, args: unknown): string 
         : ""
     const cmd = rawCmd.trim()
     if (!cmd) return null
-    if (TRIVIAL_SHELL_COMMANDS.some((trivial) => cmd === trivial || cmd.startsWith(trivial + " "))) {
+    // Judge compound commands segment by segment (`a && b`, `a; b`, newline
+    // chains) so a trivial prefix can't hide significant work.
+    const segments = cmd
+      .split(/\n|;|&&|\|\|/)
+      .map((segment) => segment.trim())
+      .filter(Boolean)
+    if (segments.length === 0) return null
+    const isTrivial = (segment: string) =>
+      TRIVIAL_SHELL_COMMANDS.some((trivial) => segment === trivial || segment.startsWith(trivial + " "))
+    if (segments.every(isTrivial)) {
       return null
     }
-    const shortCmd = clampText(redactShellCommand(cmd.split(/[;\n]/)[0].trim()), 120)
+    const firstSignificant = segments.find((segment) => !isTrivial(segment)) ?? segments[0]
+    const shortCmd = clampText(redactShellCommand(firstSignificant), 120)
     return `Ran: ${shortCmd}`
   }
 
@@ -1436,14 +1468,16 @@ export const createHonchoRuntimePlugin =
         if (!hasConfiguredAuth(handle.config)) {
           return
         }
+
+        // Every turn gets the memory instruction, even when no context is
+        // injected below (tools mode, skipped prompts, empty turns).
+        output.system = output.system || []
+        output.system.push(HONCHO_SYSTEM_INSTRUCTION)
+
         const stateKey = deriveSessionStateKey(handle)
         const state = getState(stateKey)
 
         if (handle.config.recallMode === "tools") {
-          // Even without context injection, the instruction tells the model
-          // which tools to reach for when it needs memory.
-          output.system = output.system || []
-          output.system.push(HONCHO_SYSTEM_INSTRUCTION)
           return
         }
 
@@ -1483,10 +1517,8 @@ export const createHonchoRuntimePlugin =
           }
           const compiled = compiledSections.join("\n\n")
           state.lastInjectedContext = compiled
-          output.system = output.system || []
-          output.system.push(
-            `${HONCHO_SYSTEM_INSTRUCTION}\n\n${compiled}`,
-          )
+          // The instruction itself was already appended above.
+          output.system.push(compiled)
         }, undefined)
       },
       "experimental.chat.messages.transform": async (_input, output) => {

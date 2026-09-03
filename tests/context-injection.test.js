@@ -186,10 +186,10 @@ test("system transform injects Honcho memory when OpenCode provides no prompt te
 
     await hooks["experimental.chat.system.transform"](systemInput(), output)
 
-    expect(output.system).toHaveLength(1)
+    expect(output.system).toHaveLength(2)
     expect(output.system[0]).toContain("## Honcho Memory")
-    expect(output.system[0]).toContain("The user prefers concise engineering analysis.")
-    expect(output.system[0]).not.toContain("Prompt memory for")
+    expect(output.system[1]).toContain("The user prefers concise engineering analysis.")
+    expect(output.system[1]).not.toContain("Prompt memory for")
   })
 })
 
@@ -202,8 +202,9 @@ test("system transform skips repeated no-prompt injection inside the stable refr
     const secondOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
-    expect(firstOutput.system).toHaveLength(1)
-    expect(secondOutput.system).toEqual([])
+    expect(firstOutput.system).toHaveLength(2)
+    expect(secondOutput.system).toHaveLength(1)
+    expect(secondOutput.system[0]).toContain("## Honcho Memory")
     expect(fetch.calls).toHaveLength(callCountAfterFirstInjection)
   })
 })
@@ -224,8 +225,8 @@ test("system transform refreshes no-prompt injection after the stable context tt
       const secondOutput = { system: [] }
       await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
-      expect(firstOutput.system).toHaveLength(1)
-      expect(secondOutput.system).toHaveLength(1)
+      expect(firstOutput.system).toHaveLength(2)
+      expect(secondOutput.system).toHaveLength(2)
       expect(fetch.calls.length).toBeGreaterThan(callCountAfterFirstInjection)
     })
   } finally {
@@ -242,19 +243,24 @@ test("system transform retries no-prompt stable hydration when all context sourc
     const secondOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
-    expect(firstOutput.system).toEqual([])
-    expect(secondOutput.system).toEqual([])
+    // Hydration failed, so only the always-on instruction is injected.
+    expect(firstOutput.system).toHaveLength(1)
+    expect(firstOutput.system[0]).toContain("## Honcho Memory")
+    expect(secondOutput.system).toHaveLength(1)
+    expect(secondOutput.system[0]).toContain("## Honcho Memory")
     expect(fetch.calls.length).toBeGreaterThan(callCountAfterFirstAttempt)
   }, { failStableHydration: true })
 })
 
-test("system transform still skips explicit trivial prompt text", async () => {
+test("system transform skips retrieval for explicit trivial prompt text", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
     const output = { system: [] }
 
     await hooks["experimental.chat.system.transform"](systemInput({ query: "ok" }), output)
 
-    expect(output.system).toEqual([])
+    // Retrieval is skipped but the memory instruction is always present.
+    expect(output.system).toHaveLength(1)
+    expect(output.system[0]).toContain("## Honcho Memory")
     expect(fetch.calls).toHaveLength(0)
   })
 })
@@ -265,9 +271,10 @@ test("system transform injects prompt-specific context for non-trivial prompt te
 
     await hooks["experimental.chat.system.transform"](systemInput({ query: "fix memory injection" }), output)
 
-    expect(output.system).toHaveLength(1)
-    expect(output.system[0]).toContain("The user prefers concise engineering analysis.")
-    expect(output.system[0]).toContain("Prompt memory for memory-injection")
+    expect(output.system).toHaveLength(2)
+    expect(output.system[0]).toContain("## Honcho Memory")
+    expect(output.system[1]).toContain("The user prefers concise engineering analysis.")
+    expect(output.system[1]).toContain("Prompt memory for memory-injection")
     const targeted = fetch.calls.find(
       (call) =>
         call.method === "GET" &&

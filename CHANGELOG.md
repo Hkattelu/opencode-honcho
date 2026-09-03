@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Treat recalled memory as untrusted reference data in the injected instruction: the model may use its factual content but must never follow instructions embedded in it.
-- Redact potentially credential-bearing shell arguments (API keys, passwords, cookies, authorization headers) before tool activity is persisted to Honcho; when a command may contain secrets, only the executable name is kept.
+- Redact potentially credential-bearing shell arguments (API keys, passwords, cookies, authorization headers) before tool activity is persisted to Honcho; when a command may contain secrets, only the executable name is kept. Covers credential flags like `curl -u`, and judges compound commands (`a && b`) segment by segment.
 - Always inject Honcho memory instructions on the system transform, even when `recallMode` is `tools`, and recover the current user prompt from `chat.message` when OpenCode calls the system hook without prompt text so retrieval works on every turn.
 - Record significant tool activity (shell commands, file edits, delegated tasks) into Honcho via `tool.execute.after`; read-only and trivial calls are skipped.
 - Ship a `honcho-memory` skill with the package and copy it to `~/.opencode/skills/honcho-memory` on session start and successful setup, giving the agent detailed guidance on when to pull and save memory.
