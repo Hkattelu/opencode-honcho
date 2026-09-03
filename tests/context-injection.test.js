@@ -87,6 +87,15 @@ const createHonchoFetch = ({ failStableHydration = false } = {}) => {
     if (method === "POST" && /\/v3\/workspaces\/opencode\/sessions\/[^/]+\/peers$/.test(target.pathname)) {
       return new Response(null, { status: 204 })
     }
+    if (method === "POST" && /\/v3\/workspaces\/opencode\/sessions\/[^/]+\/messages$/.test(target.pathname)) {
+      return jsonResponse([
+        {
+          id: "msg-created",
+          content: body.content,
+          created_at: new Date().toISOString(),
+        },
+      ])
+    }
 
     if (method === "GET" && /\/v3\/workspaces\/opencode\/peers\/[^/]+\/context$/.test(target.pathname)) {
       if (failStableHydration) {
@@ -278,11 +287,9 @@ test("chat.message appends prompt-specific memory as a synthetic part", async ()
 
     await hooks["chat.message"]({ sessionID: "ses-test" }, chatOutput)
 
-    // DEBUG: Print parts
-    console.log("chatOutput.parts:", JSON.stringify(chatOutput.parts, null, 2))
-
-    const synthetic = chatOutput.parts.at(-1)
-    expect(synthetic?.synthetic).toBe(true)
+    const synthetic = chatOutput.parts.find((part) => part.type === "text" && part.synthetic)
+    expect(synthetic).toBeDefined()
+    expect(synthetic?.messageID).toBe("msg-prompt")
     expect(synthetic?.text).toContain("Prompt memory for memory-injection")
 
     const targeted = fetch.calls.find(

@@ -1417,14 +1417,12 @@ export const createHonchoRuntimePlugin =
         output.env.HONCHO_URL = handle.config.baseUrl
         output.env.HONCHO_WORKSPACE_ID = handle.workspaceId
       },
-      "chat.message": async (input, output) => {
-        console.log("DEBUG chat.message called, input:", input)
+"chat.message": async (input, output) => {
         const message = extractText(output.parts)
         if (!message) {
           return
         }
         await withRuntime(input, async (runtime) => {
-          console.log("DEBUG withRuntime callback, config:", runtime.config)
           const state = getState(deriveSessionStateKey(runtime))
           state.promptCount += 1
           await captureMessage(runtime, runtime.userPeer, message, {
@@ -1438,15 +1436,12 @@ export const createHonchoRuntimePlugin =
 
           // Prompt-specific recall rides along with the user turn as a
           // synthetic part (codex-honcho parity): it persists at the end of
-          // the conversation, so the system prompt — and with it the
-          // provider's prefix cache — is never invalidated mid-session.
+          // the conversation, so the system prompt - and with it the
+          // provider's prefix cache - is never invalidated mid-session.
           const recallEnabled =
             runtime.config.recallMode === "context" || runtime.config.recallMode === "hybrid"
-          console.log("DEBUG recallEnabled:", recallEnabled, "message:", message, "skipTrivial:", shouldSkipContextRetrieval(message, INTERNAL_CONTEXT_REFRESH))
           if (recallEnabled && !shouldSkipContextRetrieval(message, INTERNAL_CONTEXT_REFRESH)) {
-            console.log("DEBUG: calling refreshPromptContext")
             const block = await refreshPromptContext(runtime, state, message)
-            console.log("DEBUG block:", block, "lastInjected:", state.lastInjectedContext)
             if (block && block !== state.lastInjectedContext) {
               state.lastInjectedContext = block
               output.parts.push({
@@ -1457,7 +1452,6 @@ export const createHonchoRuntimePlugin =
                 text: block,
                 synthetic: true,
               })
-              console.log("DEBUG: pushed synthetic part, parts length now:", output.parts.length)
             }
           }
         }, undefined)
