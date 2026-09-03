@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { tool, type Plugin, type PluginInput } from "@opencode-ai/plugin"
@@ -78,9 +79,13 @@ type ActiveRuntime = RuntimeHandle & {
 
 type SessionState = {
   stableContext: string | null
+  // Snapshot of stableContext frozen on the first system transform of the
+  // session. Frozen so provider prefix caches are never invalidated by a
+  // mid-session change to the system prompt.
+  systemContext: string | null
+  systemContextSealed: boolean
   cachedPromptContext: string | null
   lastInjectedContext: string | null
-  lastStableContextRefreshAt: number | null
   recentConclusions: string[]
   conclusionFingerprints: Set<string>
   capturedAssistantMessageIds: Set<string>
@@ -89,10 +94,6 @@ type SessionState = {
   promptCount: number
   lastPromptRefreshAt: number | null
   lastTopicKey: string | null
-  // The raw user prompt from the most recent chat.message hook. OpenCode's
-  // system-transform hook may fire without prompt text, so we keep the last
-  // prompt here to drive prompt-specific memory retrieval.
-  pendingPrompt: string | null
 }
 
 type PeerDescription = {
@@ -668,16 +669,6 @@ const shouldRefreshPromptContext = (
   return Date.now() - state.lastPromptRefreshAt >= settings.ttlSeconds * 1000
 }
 
-const shouldInjectStableContext = (state: SessionState, settings: ContextRefreshSettings) => {
-  if (!state.lastStableContextRefreshAt) {
-    return true
-  }
-  if (state.promptCount >= settings.messageThreshold) {
-    return true
-  }
-  return Date.now() - state.lastStableContextRefreshAt >= settings.ttlSeconds * 1000
-}
-
 const parseSettingField = (field: string) => {
   if (!SETTING_FIELD_PATHS.has(field)) {
     throw new Error(`Unknown setting '${field}'. Allowed fields: ${listAllowedSettingPaths().join(", ")}`)
@@ -990,22 +981,6 @@ const durableConclusionCandidate = (text: string, settings: HonchoSettings) => {
   return clampText(trimmed, INTERNAL_DIALECTIC_MAX_CHARS)
 }
 
-const extractPromptQuery = (input: Record<string, unknown> | undefined) => {
-  if (!input) return ""
-  if (typeof input.query === "string") return input.query
-  if (typeof input.message === "string") return input.message
-  if (Array.isArray(input.messages)) {
-    for (let index = input.messages.length - 1; index >= 0; index -= 1) {
-      const message = input.messages[index]
-      if (isRecord(message) && Array.isArray(message.parts)) {
-        const text = extractText(message.parts)
-        if (text) return text
-      }
-    }
-  }
-  return extractText(input.parts)
-}
-
 const toUserFacingPeerDescription = (peer: PeerDescription | null): UserFacingPeerDescription | null => {
   if (!peer) {
     return null
@@ -1032,9 +1007,10 @@ const describePeers = (handle: RuntimeHandle) => {
 
 const createSessionState = (): SessionState => ({
   stableContext: null,
+  systemContext: null,
+  systemContextSealed: false,
   cachedPromptContext: null,
   lastInjectedContext: null,
-  lastStableContextRefreshAt: null,
   recentConclusions: [],
   conclusionFingerprints: new Set<string>(),
   capturedAssistantMessageIds: new Set<string>(),
@@ -1043,7 +1019,6 @@ const createSessionState = (): SessionState => ({
   promptCount: 0,
   lastPromptRefreshAt: null,
   lastTopicKey: null,
-  pendingPrompt: null,
 })
 
 const markAssistantMessageCaptured = async (
@@ -1443,16 +1418,15 @@ export const createHonchoRuntimePlugin =
         output.env.HONCHO_WORKSPACE_ID = handle.workspaceId
       },
       "chat.message": async (input, output) => {
+        console.log("DEBUG chat.message called, input:", input)
         const message = extractText(output.parts)
         if (!message) {
           return
         }
         await withRuntime(input, async (runtime) => {
+          console.log("DEBUG withRuntime callback, config:", runtime.config)
           const state = getState(deriveSessionStateKey(runtime))
           state.promptCount += 1
-          // Remember this prompt for the system.transform hook, which may run
-          // later without the prompt text attached.
-          state.pendingPrompt = message
           await captureMessage(runtime, runtime.userPeer, message, {
             source: "chat.message",
             sessionId: runtime.sessionId,
@@ -1461,6 +1435,31 @@ export const createHonchoRuntimePlugin =
           if (candidate) {
             await maybeWriteConclusion(runtime, candidate, "chat.message")
           }
+
+          // Prompt-specific recall rides along with the user turn as a
+          // synthetic part (codex-honcho parity): it persists at the end of
+          // the conversation, so the system prompt — and with it the
+          // provider's prefix cache — is never invalidated mid-session.
+          const recallEnabled =
+            runtime.config.recallMode === "context" || runtime.config.recallMode === "hybrid"
+          console.log("DEBUG recallEnabled:", recallEnabled, "message:", message, "skipTrivial:", shouldSkipContextRetrieval(message, INTERNAL_CONTEXT_REFRESH))
+          if (recallEnabled && !shouldSkipContextRetrieval(message, INTERNAL_CONTEXT_REFRESH)) {
+            console.log("DEBUG: calling refreshPromptContext")
+            const block = await refreshPromptContext(runtime, state, message)
+            console.log("DEBUG block:", block, "lastInjected:", state.lastInjectedContext)
+            if (block && block !== state.lastInjectedContext) {
+              state.lastInjectedContext = block
+              output.parts.push({
+                id: randomUUID(),
+                sessionID: input.sessionID,
+                messageID: output.message.id,
+                type: "text",
+                text: block,
+                synthetic: true,
+              })
+              console.log("DEBUG: pushed synthetic part, parts length now:", output.parts.length)
+            }
+          }
         }, undefined)
       },
       "experimental.chat.system.transform": async (input, output) => {
@@ -1468,58 +1467,26 @@ export const createHonchoRuntimePlugin =
         if (!hasConfiguredAuth(handle.config)) {
           return
         }
+        const state = getState(deriveSessionStateKey(handle))
 
-        // Every turn gets the memory instruction, even when no context is
-        // injected below (tools mode, skipped prompts, empty turns).
+        // Seal the stable context snapshot on the first turn. From here on the
+        // system prompt is identical every request, which keeps provider
+        // prefix caches valid; only conversation appends change afterwards.
+        if (!state.systemContextSealed) {
+          if (!state.stableContext) {
+            await withRuntime(input, async (runtime) => {
+              await hydrateSessionStartContext(runtime, state)
+            }, undefined)
+          }
+          state.systemContext = state.stableContext ?? ""
+          state.systemContextSealed = true
+        }
+
         output.system = output.system || []
         output.system.push(HONCHO_SYSTEM_INSTRUCTION)
-
-        const stateKey = deriveSessionStateKey(handle)
-        const state = getState(stateKey)
-
-        if (handle.config.recallMode === "tools") {
-          return
+        if (state.systemContext) {
+          output.system.push(state.systemContext)
         }
-
-        // OpenCode does not always pass the prompt text to this hook, so fall
-        // back to the message captured by the chat.message hook.
-        const rawQuery = extractPromptQuery(input) || state.pendingPrompt || ""
-        state.pendingPrompt = null
-        const trimmedQuery = rawQuery.trim()
-        const hasQuery = trimmedQuery.length > 0
-        const shouldInjectStable = !hasQuery && shouldInjectStableContext(state, INTERNAL_CONTEXT_REFRESH)
-        const shouldSkip =
-          (hasQuery && shouldSkipContextRetrieval(trimmedQuery, INTERNAL_CONTEXT_REFRESH)) ||
-          (!hasQuery && !shouldInjectStable)
-        if (shouldSkip) {
-          return
-        }
-        await withRuntime(input, async (runtime) => {
-          const state = getState(deriveSessionStateKey(runtime))
-          if (!state.stableContext || shouldInjectStable) {
-            const stableContextHydrated = await hydrateSessionStartContext(runtime, state)
-            if (stableContextHydrated) {
-              state.lastStableContextRefreshAt = Date.now()
-            }
-            if (shouldInjectStable && stableContextHydrated) {
-              state.promptCount = 0
-            }
-          }
-          const promptContext =
-            hasQuery && (runtime.config.recallMode === "context" || runtime.config.recallMode === "hybrid")
-              ? await refreshPromptContext(runtime, state, trimmedQuery)
-              : null
-          const compiledSections = [state.stableContext, promptContext].filter(
-            (value): value is string => Boolean(value && value.trim()),
-          )
-          if (compiledSections.length === 0) {
-            return
-          }
-          const compiled = compiledSections.join("\n\n")
-          state.lastInjectedContext = compiled
-          // The instruction itself was already appended above.
-          output.system.push(compiled)
-        }, undefined)
       },
       "experimental.chat.messages.transform": async (_input, output) => {
         void output

@@ -126,6 +126,7 @@ const createHonchoFetch = ({ failStableHydration = false } = {}) => {
         messages: [],
         summary: summary("Prompt-specific session summary."),
         peer_representation: `Prompt memory for ${target.searchParams.get("search_query")}`,
+        peerRepresentation: `Prompt memory for ${target.searchParams.get("search_query")}`,
         peer_card: null,
       })
     }
@@ -193,7 +194,7 @@ test("system transform injects Honcho memory when OpenCode provides no prompt te
   })
 })
 
-test("system transform skips repeated no-prompt injection inside the stable refresh window", async () => {
+test("system transform seals the stable context after the first turn", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
     const firstOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), firstOutput)
@@ -202,14 +203,14 @@ test("system transform skips repeated no-prompt injection inside the stable refr
     const secondOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
+    // The snapshot is frozen: identical system prompt, no new network calls.
     expect(firstOutput.system).toHaveLength(2)
-    expect(secondOutput.system).toHaveLength(1)
-    expect(secondOutput.system[0]).toContain("## Honcho Memory")
+    expect(secondOutput.system).toEqual(firstOutput.system)
     expect(fetch.calls).toHaveLength(callCountAfterFirstInjection)
   })
 })
 
-test("system transform refreshes no-prompt injection after the stable context ttl", async () => {
+test("system transform keeps the frozen snapshot even after the stable context ttl", async () => {
   const originalNow = Date.now
   try {
     let now = 1_000_000
@@ -225,16 +226,15 @@ test("system transform refreshes no-prompt injection after the stable context tt
       const secondOutput = { system: [] }
       await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
-      expect(firstOutput.system).toHaveLength(2)
-      expect(secondOutput.system).toHaveLength(2)
-      expect(fetch.calls.length).toBeGreaterThan(callCountAfterFirstInjection)
+      expect(secondOutput.system).toEqual(firstOutput.system)
+      expect(fetch.calls).toHaveLength(callCountAfterFirstInjection)
     })
   } finally {
     Date.now = originalNow
   }
 })
 
-test("system transform retries no-prompt stable hydration when all context sources fail", async () => {
+test("system transform does not retry stable hydration after the first turn", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
     const firstOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), firstOutput)
@@ -243,38 +243,48 @@ test("system transform retries no-prompt stable hydration when all context sourc
     const secondOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
-    // Hydration failed, so only the always-on instruction is injected.
+    // Hydration failed once and the snapshot was sealed empty — only the
+    // instruction is injected and no retry happens.
     expect(firstOutput.system).toHaveLength(1)
     expect(firstOutput.system[0]).toContain("## Honcho Memory")
-    expect(secondOutput.system).toHaveLength(1)
-    expect(secondOutput.system[0]).toContain("## Honcho Memory")
-    expect(fetch.calls.length).toBeGreaterThan(callCountAfterFirstAttempt)
+    expect(secondOutput.system).toEqual(firstOutput.system)
+    expect(fetch.calls).toHaveLength(callCountAfterFirstAttempt)
   }, { failStableHydration: true })
 })
 
-test("system transform skips retrieval for explicit trivial prompt text", async () => {
+test("chat.message skips recall for trivial prompt text", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
-    const output = { system: [] }
+    const chatOutput = {
+      message: { id: "msg-trivial", role: "user", time: { created: Date.now() } },
+      parts: [{ type: "text", text: "ok" }],
+    }
 
-    await hooks["experimental.chat.system.transform"](systemInput({ query: "ok" }), output)
+    await hooks["chat.message"]({ sessionID: "ses-test" }, chatOutput)
 
-    // Retrieval is skipped but the memory instruction is always present.
-    expect(output.system).toHaveLength(1)
-    expect(output.system[0]).toContain("## Honcho Memory")
-    expect(fetch.calls).toHaveLength(0)
+    expect(chatOutput.parts).toHaveLength(1)
+    const sessionContextCalls = fetch.calls.filter(
+      (call) => call.method === "GET" && /\/sessions\/[^/]+\/context$/.test(call.pathname),
+    )
+    expect(sessionContextCalls).toHaveLength(0)
   })
 })
 
-test("system transform injects prompt-specific context for non-trivial prompt text", async () => {
+test("chat.message appends prompt-specific memory as a synthetic part", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
-    const output = { system: [] }
+    const chatOutput = {
+      message: { id: "msg-prompt", role: "user", time: { created: Date.now() } },
+      parts: [{ type: "text", text: "fix memory injection" }],
+    }
 
-    await hooks["experimental.chat.system.transform"](systemInput({ query: "fix memory injection" }), output)
+    await hooks["chat.message"]({ sessionID: "ses-test" }, chatOutput)
 
-    expect(output.system).toHaveLength(2)
-    expect(output.system[0]).toContain("## Honcho Memory")
-    expect(output.system[1]).toContain("The user prefers concise engineering analysis.")
-    expect(output.system[1]).toContain("Prompt memory for memory-injection")
+    // DEBUG: Print parts
+    console.log("chatOutput.parts:", JSON.stringify(chatOutput.parts, null, 2))
+
+    const synthetic = chatOutput.parts.at(-1)
+    expect(synthetic?.synthetic).toBe(true)
+    expect(synthetic?.text).toContain("Prompt memory for memory-injection")
+
     const targeted = fetch.calls.find(
       (call) =>
         call.method === "GET" &&
@@ -284,5 +294,9 @@ test("system transform injects prompt-specific context for non-trivial prompt te
     expect(targeted).toBeDefined()
     expect(targeted.search.get("peer_perspective")).toBe("user")
     expect(targeted.search.get("peer_target")).toBe("user")
+
+    const systemOutput = { system: [] }
+    await hooks["experimental.chat.system.transform"](systemInput(), systemOutput)
+    expect(systemOutput.system.join("\n")).not.toContain("Prompt memory for")
   })
 })

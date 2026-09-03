@@ -53,7 +53,7 @@ const summary = (content) => ({
   token_count: 12,
 })
 
-const createHonchoFetch = () => {
+const createHonchoFetch = ({ failStableHydration = false } = {}) => {
   const calls = []
   const fetch = async (url, init = {}) => {
     const target = new URL(typeof url === "string" ? url : url.toString())
@@ -64,7 +64,6 @@ const createHonchoFetch = () => {
     if (method === "POST" && target.pathname === "/v3/workspaces") {
       return jsonResponse({ id: body.id, metadata: {}, configuration: {} })
     }
-
     if (method === "POST" && target.pathname === "/v3/workspaces/opencode/peers") {
       return jsonResponse({
         id: body.id,
@@ -73,7 +72,6 @@ const createHonchoFetch = () => {
         created_at: new Date(0).toISOString(),
       })
     }
-
     if (method === "POST" && target.pathname === "/v3/workspaces/opencode/sessions") {
       return jsonResponse({
         id: body.id,
@@ -83,11 +81,9 @@ const createHonchoFetch = () => {
         is_active: true,
       })
     }
-
     if (method === "POST" && /\/v3\/workspaces\/opencode\/sessions\/[^/]+\/peers$/.test(target.pathname)) {
       return new Response(null, { status: 204 })
     }
-
     if (method === "POST" && /\/v3\/workspaces\/opencode\/sessions\/[^/]+\/messages$/.test(target.pathname)) {
       return jsonResponse([
         {
@@ -97,7 +93,6 @@ const createHonchoFetch = () => {
         },
       ])
     }
-
     if (method === "GET" && /\/v3\/workspaces\/opencode\/peers\/[^/]+\/context$/.test(target.pathname)) {
       const peerId = decodeURIComponent(target.pathname.split("/").at(-2))
       return jsonResponse({
@@ -109,7 +104,6 @@ const createHonchoFetch = () => {
         peer_card: ["Keep changes narrowly scoped."],
       })
     }
-
     if (method === "GET" && /\/v3\/workspaces\/opencode\/sessions\/[^/]+\/summaries$/.test(target.pathname)) {
       return jsonResponse({
         id: decodeURIComponent(target.pathname.split("/").at(-2)),
@@ -117,16 +111,25 @@ const createHonchoFetch = () => {
         long_summary: null,
       })
     }
-
     if (method === "POST" && /\/v3\/workspaces\/opencode\/peers\/[^/]+\/chat$/.test(target.pathname)) {
       return jsonResponse({ content: "Durable project memory is available." })
     }
 
-    if (method === "GET" && /\/v3\/workspaces\/opencode\/sessions\/[^/]+\/context$/.test(target.pathname)) {
+    if (method === "GET" && /^\/v3\/workspaces\/opencode\/sessions\/[^/]+\/context$/.test(target.pathname)) {
+      const searchQuery = target.searchParams.get("search_query") || ""
+      const peerPerspective = target.searchParams.get("peer_perspective") || "user"
+      const peerTarget = target.searchParams.get("peer_target") || "user"
+
+      if (failStableHydration && searchQuery === "memory-injection") {
+        return jsonResponse(undefined)
+      }
+      if (failStableHydration && searchQuery === "database") {
+        return jsonResponse(undefined)
+      }
       return jsonResponse({
         messages: [],
         summary: summary("Prompt-specific session summary."),
-        peer_representation: `Prompt memory for ${target.searchParams.get("search_query")}`,
+        peer_representation: `Prompt memory for ${searchQuery}`,
         peer_card: null,
       })
     }
@@ -195,7 +198,7 @@ test("system transform includes updated custom instructions with tool directives
   })
 })
 
-test("real OpenCode flow: chat.message sets pendingPrompt for subsequent system.transform", async () => {
+test("real OpenCode flow: chat.message appends recalled memory as a synthetic part", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
     const chatInput = { sessionID: "ses-test" }
     const chatOutput = {
@@ -203,10 +206,17 @@ test("real OpenCode flow: chat.message sets pendingPrompt for subsequent system.
       parts: [{ type: "text", text: "How should I structure the database?" }],
     }
 
-    // Step 1: User sends message via chat.message hook
+    // Step 1: User sends message via chat.message hook — recall rides along
+    // as a synthetic part on the user message.
     await hooks["chat.message"](chatInput, chatOutput)
 
-    // Step 2: OpenCode calls system.transform with only sessionID and model (no query)
+    const synthetic = chatOutput.parts.find((part) => part.type === "text" && part.synthetic)
+    expect(synthetic).toBeDefined()
+    expect(synthetic.messageID).toBe("msg-user-1")
+    expect(synthetic.text).toContain("Relevant Honcho memory:")
+    expect(synthetic.text).toContain("database")
+
+    // Step 2: The system prompt carries only the sealed stable context.
     const sysOutput = { system: [] }
     await hooks["experimental.chat.system.transform"]({
       sessionID: "ses-test",
@@ -215,8 +225,7 @@ test("real OpenCode flow: chat.message sets pendingPrompt for subsequent system.
 
     expect(sysOutput.system).toHaveLength(2)
     expect(sysOutput.system[0]).toContain("## Honcho Memory")
-    expect(sysOutput.system[1]).toContain("Relevant Honcho memory:")
-    expect(sysOutput.system[1]).toContain("database")
+    expect(sysOutput.system.join("\n")).not.toContain("Prompt memory for")
   })
 })
 
