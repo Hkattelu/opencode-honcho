@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Always inject Honcho memory instructions on the system transform, even when `recallMode` is `tools`, and recover the current user prompt from `chat.message` when OpenCode calls the system hook without prompt text so retrieval works on every turn.
+- Record significant tool activity (shell commands, file edits, delegated tasks) into Honcho via `tool.execute.after`; read-only and trivial calls are skipped.
+- Ship a `honcho-memory` skill with the package and copy it to `~/.opencode/skills/honcho-memory` on session start and successful setup, giving the agent detailed guidance on when to pull and save memory.
 - Honor `hosts.opencode.apiKey` as an override of the root `apiKey`. Setup preserves a host-scoped key instead of copying or dropping it.
 - Add `hosts.opencode.observationMode`. New installs default to `unified`; configs that omit the field stay `directional`. `honcho_chat`, `honcho_create_conclusion`, and targeted prompt recall follow the mode.
 - Prompt on upgrade (`/honcho:setup`, `/honcho:status`, `/honcho:config`, and TUI launch) to keep directional or switch to unified, and suggest `/honcho:import` after switching so local history can be reingested.

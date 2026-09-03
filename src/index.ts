@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { tool, type Plugin, type PluginInput } from "@opencode-ai/plugin"
 import { Honcho } from "@honcho-ai/sdk"
 import {
@@ -21,6 +22,7 @@ import {
   stampedHostObservationMode,
   timestampToIso,
   unifiedImportFollowUp,
+  userHomeDir,
   walkToProjectRoot,
   type HonchoSettings,
   type ObservationMode,
@@ -87,6 +89,10 @@ type SessionState = {
   promptCount: number
   lastPromptRefreshAt: number | null
   lastTopicKey: string | null
+  // The raw user prompt from the most recent chat.message hook. OpenCode's
+  // system-transform hook may fire without prompt text, so we keep the last
+  // prompt here to drive prompt-specific memory retrieval.
+  pendingPrompt: string | null
 }
 
 type PeerDescription = {
@@ -174,6 +180,112 @@ const TRIVIAL_PROMPT_PATTERNS = [
   /^(ok|okay|k|thanks|thank you|continue|go on|next|yes|y|no|n|retry|again)$/i,
   /^(fix it|do it|ship it|run it|keep going)$/i,
 ]
+
+export const HONCHO_SYSTEM_INSTRUCTION = [
+  "## Honcho Memory",
+  "You have persistent memory via Honcho that survives across sessions and chats. Context about the user, their preferences, past decisions, and this project is loaded automatically.",
+  "- Trust the injected context and act on it; don't ask the user what you already know.",
+  "- Use `honcho_search` or `honcho_chat` to recall past context, conventions, or past decisions mid-session before guessing or making assumptions.",
+  "- Use `honcho_create_conclusion` to actively save durable insights, user preferences, architectural decisions, and key patterns you learn during the conversation.",
+].join("\n")
+
+// The skill is shipped with the package (see "files" in package.json) and copied
+// into OpenCode's skills directory so the agent can pull it up on demand.
+const PACKAGED_SKILL_FILE = fileURLToPath(new URL("../skills/honcho-memory/SKILL.md", import.meta.url))
+
+// Best effort: returns the install path on success, null if anything goes wrong.
+export const ensureHonchoSkillInstalled = async (targetSkillsDir?: string): Promise<string | null> => {
+  try {
+    const content = await readFile(PACKAGED_SKILL_FILE, "utf-8")
+    const baseDir = targetSkillsDir || path.join(userHomeDir(), ".opencode", "skills")
+    const destDir = path.join(baseDir, "honcho-memory")
+    const destFile = path.join(destDir, "SKILL.md")
+    await mkdir(destDir, { recursive: true })
+    await writeFile(destFile, content, "utf-8")
+    return destFile
+  } catch {
+    return null
+  }
+}
+
+const TRIVIAL_SHELL_COMMANDS = [
+  "cd", "ls", "pwd", "echo", "cat", "head", "tail", "which", "type",
+  "grep", "rg", "find", "fd", "wc", "sed", "awk", "less", "more", "stat",
+  "file", "tree", "du", "df", "env", "printf", "sort", "uniq", "cut", "jq",
+  "open", "true", "sleep", "date",
+  "git status", "git log", "git diff", "git show", "git branch",
+]
+
+// One-line description of a tool call worth remembering, or null if the call
+// is too trivial (read-only lookups, trivial shell commands, Honcho's own
+// tools) to add signal to the session history.
+export const summarizeToolExecution = (toolName: string, args: unknown): string | null => {
+  if (!toolName || toolName.startsWith("honcho_") || toolName.startsWith("honcho:")) {
+    return null
+  }
+
+  const recordArgs = isRecord(args) ? args : {}
+  const normalizedTool = toolName.toLowerCase()
+
+  if (normalizedTool === "bash" || normalizedTool === "shell" || normalizedTool === "exec") {
+    const rawCmd = typeof recordArgs.command === "string"
+      ? recordArgs.command
+      : typeof recordArgs.cmd === "string"
+        ? recordArgs.cmd
+        : ""
+    const cmd = rawCmd.trim()
+    if (!cmd) return null
+    if (TRIVIAL_SHELL_COMMANDS.some((trivial) => cmd === trivial || cmd.startsWith(trivial + " "))) {
+      return null
+    }
+    const shortCmd = clampText(cmd.split(/[;\n]/)[0].trim(), 120)
+    return `Ran: ${shortCmd}`
+  }
+
+  if (
+    normalizedTool === "edit" ||
+    normalizedTool === "file_edit" ||
+    normalizedTool === "write" ||
+    normalizedTool === "file_write" ||
+    normalizedTool === "apply_patch"
+  ) {
+    const filePath = typeof recordArgs.path === "string"
+      ? recordArgs.path
+      : typeof recordArgs.filePath === "string"
+        ? recordArgs.filePath
+        : typeof recordArgs.file === "string"
+          ? recordArgs.file
+          : ""
+    const action = normalizedTool.includes("write") ? "Created" : "Edited"
+    if (filePath) {
+      return `${action}: ${filePath}`
+    }
+    return normalizedTool === "apply_patch" ? "Applied patch" : `${action} file`
+  }
+
+  if (normalizedTool === "task") {
+    const desc = typeof recordArgs.description === "string"
+      ? recordArgs.description
+      : typeof recordArgs.prompt === "string"
+        ? recordArgs.prompt
+        : ""
+    if (desc) {
+      return `Task: ${clampText(desc.trim(), 100)}`
+    }
+    return "Executed task"
+  }
+
+  if (
+    normalizedTool === "read" ||
+    normalizedTool === "file_read" ||
+    normalizedTool === "glob" ||
+    normalizedTool === "grep"
+  ) {
+    return null
+  }
+
+  return `Used ${toolName}`
+}
 
 const TECH_TERM_PATTERN =
   /\b(react|vue|svelte|angular|fastapi|django|flask|postgres|redis|docker|kubernetes|bun|node|typescript|python|rust|go|graphql|rest|api|auth|oauth|jwt|stripe|webhook)\b/gi
@@ -860,6 +972,7 @@ const createSessionState = (): SessionState => ({
   promptCount: 0,
   lastPromptRefreshAt: null,
   lastTopicKey: null,
+  pendingPrompt: null,
 })
 
 const markAssistantMessageCaptured = async (
@@ -1211,6 +1324,9 @@ export const createHonchoRuntimePlugin =
         }
         if (event.type === "session.created") {
           await withRuntime(payload, async (runtime) => {
+            // Fire and forget — installing the skill is best effort and should
+            // never block session startup.
+            void ensureHonchoSkillInstalled()
             const state = getState(deriveSessionStateKey(runtime))
             await hydrateSessionStartContext(runtime, state)
             await log("info", "Honcho session initialized for OpenCode.", await runtimeStatus(payload))
@@ -1262,6 +1378,9 @@ export const createHonchoRuntimePlugin =
         await withRuntime(input, async (runtime) => {
           const state = getState(deriveSessionStateKey(runtime))
           state.promptCount += 1
+          // Remember this prompt for the system.transform hook, which may run
+          // later without the prompt text attached.
+          state.pendingPrompt = message
           await captureMessage(runtime, runtime.userPeer, message, {
             source: "chat.message",
             sessionId: runtime.sessionId,
@@ -1274,13 +1393,26 @@ export const createHonchoRuntimePlugin =
       },
       "experimental.chat.system.transform": async (input, output) => {
         const handle = await deriveRuntimeHandle(pluginInput, input, configPath)
-        if (handle.config.recallMode === "tools" || !hasConfiguredAuth(handle.config)) {
+        if (!hasConfiguredAuth(handle.config)) {
           return
         }
-        const query = extractPromptQuery(input)
-        const trimmedQuery = query.trim()
+        const stateKey = deriveSessionStateKey(handle)
+        const state = getState(stateKey)
+
+        if (handle.config.recallMode === "tools") {
+          // Even without context injection, the instruction tells the model
+          // which tools to reach for when it needs memory.
+          output.system = output.system || []
+          output.system.push(HONCHO_SYSTEM_INSTRUCTION)
+          return
+        }
+
+        // OpenCode does not always pass the prompt text to this hook, so fall
+        // back to the message captured by the chat.message hook.
+        const rawQuery = extractPromptQuery(input) || state.pendingPrompt || ""
+        state.pendingPrompt = null
+        const trimmedQuery = rawQuery.trim()
         const hasQuery = trimmedQuery.length > 0
-        const state = getState(deriveSessionStateKey(handle))
         const shouldInjectStable = !hasQuery && shouldInjectStableContext(state, INTERNAL_CONTEXT_REFRESH)
         const shouldSkip =
           (hasQuery && shouldSkipContextRetrieval(trimmedQuery, INTERNAL_CONTEXT_REFRESH)) ||
@@ -1313,7 +1445,7 @@ export const createHonchoRuntimePlugin =
           state.lastInjectedContext = compiled
           output.system = output.system || []
           output.system.push(
-            `## Honcho Memory\nUse this as persistent project and user memory. Prefer it over guessing, but only mention it when relevant to the current task.\n\n${compiled}`,
+            `${HONCHO_SYSTEM_INSTRUCTION}\n\n${compiled}`,
           )
         }, undefined)
       },
@@ -1349,11 +1481,28 @@ export const createHonchoRuntimePlugin =
           ].join("\n"),
         )
       },
-      "tool.execute.before": async (_input, output) => {
-        output.args = output.args
-      },
-      "tool.execute.after": async () => {
-        return
+      "tool.execute.after": async (input) => {
+        // Record a one-line summary of significant tool activity into the
+        // session history so future memory recall reflects what was actually
+        // done, not just what was discussed.
+        const summary = summarizeToolExecution(input.tool, input.args)
+        if (!summary) {
+          return
+        }
+        await withRuntime({ sessionID: input.sessionID }, async (runtime) => {
+          await captureMessage(
+            runtime,
+            runtime.agentPeer,
+            `[Tool] ${summary}`,
+            {
+              source: "tool.execute.after",
+              tool: input.tool,
+              callID: input.callID,
+              sessionId: runtime.sessionId,
+            },
+            timestampToIso(Date.now()),
+          )
+        }, undefined)
       },
       tool: {
         honcho_get_config: tool({
@@ -1445,6 +1594,9 @@ export const createHonchoRuntimePlugin =
                 apiKey: effectiveApiKey,
                 baseUrl: effectiveBaseUrl,
               })
+              if (configured) {
+                await ensureHonchoSkillInstalled()
+              }
               const status = await runtimeStatus({ sessionID: context.sessionID })
               const readyMessage = effectiveApiKey
                 ? effectiveBaseUrl === DEFAULT_SETTINGS.baseUrl
@@ -1673,5 +1825,7 @@ export const __testing = {
   normalizeId,
   sessionPeerAdditions,
   resolveAgentObserveMe,
+  ensureHonchoSkillInstalled,
+  summarizeToolExecution,
 }
 export default HonchoRuntimePlugin

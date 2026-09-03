@@ -44,6 +44,8 @@ If your shell cannot find `opencode`, restart your shell or source your shell co
 ## What You Get
 
 - **Persistent Memory** - OpenCode can retain durable context across sessions
+- **Hook-Driven Memory** - OpenCode hooks inject user/project memory at the start of every turn and record significant tool activity, so memory works regardless of the underlying model
+- **Honcho Memory Skill** - A `honcho-memory` skill is installed to `~/.opencode/skills/honcho-memory` so the agent knows when to pull and save memory actively
 - **Cloud or Local Deployments** - Use Honcho Cloud or point at a self-hosted or local Honcho instance
 - **Workspace Mapping** - OpenCode projects map to Honcho workspaces
 - **Session Mapping** - Sessions can be scoped per directory, repo, branch, chat instance, or globally
@@ -192,6 +194,12 @@ The plugin uses these OpenCode plugin capabilities:
 - `experimental.session.compacting`
 - `shell.env`
 - `tool`
+
+### How hooks drive memory
+
+- `experimental.chat.system.transform` always appends Honcho memory instructions. With `recallMode: "hybrid"` or `"context"` it also injects prompt-specific memory retrieved for the current user message (recovered via `chat.message` when OpenCode calls the system hook without prompt text).
+- `tool.execute.after` records significant tool activity (shell commands, file edits, delegated tasks) into the session history so future recall reflects what was actually done. Read-only and trivial calls are skipped.
+- On session start (and after `honcho_setup` succeeds), the plugin copies the packaged `honcho-memory` skill into `~/.opencode/skills/honcho-memory`.
 
 ## Development
 
