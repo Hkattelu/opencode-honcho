@@ -198,7 +198,7 @@ The plugin uses these OpenCode plugin capabilities:
 ### How hooks drive memory
 
 - `experimental.chat.system.transform` always appends Honcho memory instructions. With `recallMode: "hybrid"` or `"context"` it also injects prompt-specific memory retrieved for the current user message (recovered via `chat.message` when OpenCode calls the system hook without prompt text).
-- `tool.execute.after` records significant tool activity (shell commands, file edits, delegated tasks) into the session history so future recall reflects what was actually done. Read-only and trivial calls are skipped.
+- `tool.execute.after` records significant tool activity (shell commands, file edits, delegated tasks) into the session history so future recall reflects what was actually done. Read-only and trivial calls are skipped, and potentially credential-bearing shell arguments (API keys, passwords, cookies, authorization headers) are redacted before storage.
 - On session start (and after `honcho_setup` succeeds), the plugin copies the packaged `honcho-memory` skill into `~/.opencode/skills/honcho-memory`.
 
 ## Development
