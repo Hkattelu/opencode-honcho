@@ -244,9 +244,11 @@ const shellTokenMayCarrySecret = (token: string): boolean => {
     return true
   }
   if (ENV_ASSIGNMENT_PATTERN.test(token)) {
-    // For assignments only the name is checked, so DEBUG=1 survives but
-    // API_KEY=... does not.
-    return SENSITIVE_ARG_PATTERN.test(token.slice(0, token.indexOf("=")))
+    const equalsIndex = token.indexOf("=")
+    const name = token.slice(0, equalsIndex)
+    const value = token.slice(equalsIndex + 1)
+    return SENSITIVE_ARG_PATTERN.test(name) || CREDENTIAL_URL_PATTERN.test(value)
+  }
   }
   // Covers --api-key style flags and bare value tokens like
   // 'Authorization: Bearer ...' passed after a generic -H flag.
