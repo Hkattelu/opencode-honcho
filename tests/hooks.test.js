@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { mkdtemp, readFile } from "node:fs/promises"
+import { mkdtemp, readFile, stat, utimes } from "node:fs/promises"
 
 import { createHonchoRuntimePlugin, __testing } from "../dist/index.js"
 
@@ -247,6 +247,13 @@ test("summarizeToolExecution correctly summarizes significant tools and skips tr
   expect(summarizeToolExecution("bash", { command: "git status && npm test" })).toBe("Ran: npm test")
   expect(summarizeToolExecution("bash", { command: "ls; git log" })).toBeNull()
 
+  // Unquoted pipe characters should also split before classification
+  expect(summarizeToolExecution("bash", { command: "ls | npm test" })).toBe("Ran: npm test")
+  expect(summarizeToolExecution("bash", { command: "cat file | grep test | npm test" })).toBe("Ran: npm test")
+
+  // Quoted pipe characters should be preserved
+  expect(summarizeToolExecution("bash", { command: "echo \"a | b\" && npm test" })).toBe("Ran: npm test")
+
   // File modification tools
   expect(summarizeToolExecution("edit", { path: "src/index.ts" })).toBe("Edited: src/index.ts")
   expect(summarizeToolExecution("write", { path: "README.md" })).toBe("Created: README.md")
@@ -330,4 +337,20 @@ test("ensureHonchoSkillInstalled writes SKILL.md to the specified directory", as
   expect(content).toContain("honcho_search")
   expect(content).toContain("honcho_chat")
   expect(content).toContain("honcho_create_conclusion")
+})
+
+test("ensureHonchoSkillInstalled honors OPENCODE_CONFIG_DIR and skips identical writes", async () => {
+  const configDir = await mkdtemp(path.join(os.tmpdir(), "honcho-opencode-config-test-"))
+
+  await withEnv({ OPENCODE_CONFIG_DIR: configDir }, async () => {
+    const installedPath = await __testing.ensureHonchoSkillInstalled()
+    expect(installedPath).toBe(path.join(configDir, "skills", "honcho-memory", "SKILL.md"))
+
+    const oldTimestamp = new Date("2000-01-01T00:00:00.000Z")
+    await utimes(installedPath, oldTimestamp, oldTimestamp)
+    await __testing.ensureHonchoSkillInstalled()
+
+    const installedStat = await stat(installedPath)
+    expect(installedStat.mtimeMs).toBeLessThan(Date.now() - 60_000)
+  })
 })

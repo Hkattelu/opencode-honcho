@@ -198,9 +198,15 @@ const PACKAGED_SKILL_FILE = fileURLToPath(new URL("../skills/honcho-memory/SKILL
 export const ensureHonchoSkillInstalled = async (targetSkillsDir?: string): Promise<string | null> => {
   try {
     const content = await readFile(PACKAGED_SKILL_FILE, "utf-8")
-    const baseDir = targetSkillsDir || path.join(userHomeDir(), ".opencode", "skills")
+    const openCodeConfigDir =
+      process.env.OPENCODE_CONFIG_DIR?.trim() || path.join(userHomeDir(), ".config", "opencode")
+    const baseDir = targetSkillsDir || path.join(openCodeConfigDir, "skills")
     const destDir = path.join(baseDir, "honcho-memory")
     const destFile = path.join(destDir, "SKILL.md")
+    const existingContent = await readFile(destFile, "utf-8").catch(() => null)
+    if (existingContent === content) {
+      return destFile
+    }
     await mkdir(destDir, { recursive: true })
     await writeFile(destFile, content, "utf-8")
     return destFile
@@ -248,7 +254,6 @@ const shellTokenMayCarrySecret = (token: string): boolean => {
     const name = token.slice(0, equalsIndex)
     const value = token.slice(equalsIndex + 1)
     return SENSITIVE_ARG_PATTERN.test(name) || CREDENTIAL_URL_PATTERN.test(value)
-  }
   }
   // Covers --api-key style flags and bare value tokens like
   // 'Authorization: Bearer ...' passed after a generic -H flag.
@@ -300,10 +305,33 @@ export const summarizeToolExecution = (toolName: string, args: unknown): string 
     const cmd = rawCmd.trim()
     if (!cmd) return null
     // Judge compound commands segment by segment (`a && b`, `a; b`, newline
-    // chains) so a trivial prefix can't hide significant work.
+    // chains, and unquoted pipelines) so a trivial prefix can't hide
+    // significant work. Quoted pipe characters (`echo "a | b"`) are preserved.
     const segments = cmd
-      .split(/\n|;|&&|\|\|/)
-      .map((segment) => segment.trim())
+      .split(/[\n;]|\|\||&&/)
+      .flatMap((segment) => {
+        const result: string[] = []
+        let current = ""
+        let inSingleQuotes = false
+        let inDoubleQuotes = false
+        for (let i = 0; i < segment.length; i++) {
+          const char = segment[i]
+          if (char === "'" && !inDoubleQuotes) {
+            inSingleQuotes = !inSingleQuotes
+            current += char
+          } else if (char === '"' && !inSingleQuotes) {
+            inDoubleQuotes = !inDoubleQuotes
+            current += char
+          } else if (char === "|" && !inSingleQuotes && !inDoubleQuotes) {
+            result.push(current.trim())
+            current = ""
+          } else {
+            current += char
+          }
+        }
+        result.push(current.trim())
+        return result.filter(Boolean)
+      })
       .filter(Boolean)
     if (segments.length === 0) return null
     const isTrivial = (segment: string) =>
@@ -1463,6 +1491,13 @@ export const createHonchoRuntimePlugin =
         if (!hasConfiguredAuth(handle.config)) {
           return
         }
+
+        output.system = output.system || []
+        output.system.push(HONCHO_SYSTEM_INSTRUCTION)
+        if (handle.config.recallMode === "tools") {
+          return
+        }
+
         const state = getState(deriveSessionStateKey(handle))
 
         // Seal the stable context snapshot on the first turn. From here on the
@@ -1478,8 +1513,6 @@ export const createHonchoRuntimePlugin =
           state.systemContextSealed = true
         }
 
-        output.system = output.system || []
-        output.system.push(HONCHO_SYSTEM_INSTRUCTION)
         if (state.systemContext) {
           output.system.push(state.systemContext)
         }

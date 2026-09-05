@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { mkdtemp } from "node:fs/promises"
+import { mkdtemp, writeFile } from "node:fs/promises"
 
 import { createHonchoRuntimePlugin } from "../dist/index.js"
 
@@ -146,8 +146,8 @@ const createHonchoFetch = ({ failStableHydration = false } = {}) => {
   return fetch
 }
 
-const createPluginHarness = async (rootDir) => {
-  const plugin = createHonchoRuntimePlugin()
+const createPluginHarness = async (rootDir, configPath) => {
+  const plugin = createHonchoRuntimePlugin(configPath ? { configPath } : undefined)
   return plugin({
     client: {
       app: {
@@ -165,9 +165,13 @@ const createPluginHarness = async (rootDir) => {
   })
 }
 
-const runWithHarness = async (action, fetchOptions) => {
+const runWithHarness = async (action, fetchOptions, settings) => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-context-root-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-context-home-"))
+  const configPath = settings ? path.join(homeDir, "honcho.json") : undefined
+  if (configPath) {
+    await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
+  }
   const fetch = createHonchoFetch(fetchOptions)
   return withMockFetch(fetch, () =>
     withEnv({
@@ -178,7 +182,7 @@ const runWithHarness = async (action, fetchOptions) => {
       HONCHO_URL: undefined,
       HONCHO_BASE_URL: undefined,
     }, async () => {
-      const hooks = await createPluginHarness(rootDir)
+      const hooks = await createPluginHarness(rootDir, configPath)
       return action({ hooks, fetch })
     }),
   )
@@ -201,6 +205,19 @@ test("system transform injects Honcho memory when OpenCode provides no prompt te
     expect(output.system[1]).toContain("The user prefers concise engineering analysis.")
     expect(output.system[1]).not.toContain("Prompt memory for")
   })
+})
+
+test("tools recall mode injects instructions without hydrating stable context", async () => {
+  await runWithHarness(async ({ hooks, fetch }) => {
+    const output = { system: [] }
+
+    await hooks["experimental.chat.system.transform"](systemInput(), output)
+
+    expect(output.system).toHaveLength(1)
+    expect(output.system[0]).toContain("## Honcho Memory")
+    expect(output.system.join("\n")).not.toContain("The user prefers concise engineering analysis.")
+    expect(fetch.calls).toHaveLength(0)
+  }, undefined, { hosts: { opencode: { recallMode: "tools" } } })
 })
 
 test("system transform seals the stable context after the first turn", async () => {
