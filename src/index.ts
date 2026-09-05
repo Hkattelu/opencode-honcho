@@ -253,7 +253,8 @@ const shellTokenMayCarrySecret = (token: string): boolean => {
     const equalsIndex = token.indexOf("=")
     const name = token.slice(0, equalsIndex)
     const value = token.slice(equalsIndex + 1)
-    return SENSITIVE_ARG_PATTERN.test(name) || CREDENTIAL_URL_PATTERN.test(value)
+    const normalizedValue = value.replace(/^['"]|['"]$/g, "")
+    return SENSITIVE_ARG_PATTERN.test(name) || CREDENTIAL_URL_PATTERN.test(normalizedValue)
   }
   // Covers --api-key style flags and bare value tokens like
   // 'Authorization: Bearer ...' passed after a generic -H flag.
