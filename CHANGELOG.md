@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Inject memory through OpenCode hooks. The system prompt always carries the Honcho memory instruction; with `recallMode` `hybrid` or `context`, a stable memory snapshot is added once per session and prompt-specific recall is appended to each user turn. `tools` injects the instruction only. Recalled memory is presented as untrusted reference data.
+- Record significant tool activity (shell commands, file edits, delegated tasks) to Honcho via `tool.execute.after`. Read-only and trivial calls are skipped; shell arguments that may carry credentials are redacted down to the executable name.
+- Ship a `honcho-memory` skill and install it to `~/.config/opencode/skills/honcho-memory` (or `$OPENCODE_CONFIG_DIR/skills/honcho-memory`) on session start and after setup. An unchanged file is left untouched.
 - Honor `hosts.opencode.apiKey` as an override of the root `apiKey`. Setup preserves a host-scoped key instead of copying or dropping it.
 - Add `hosts.opencode.observationMode`. New installs default to `unified`; configs that omit the field stay `directional`. `honcho_chat`, `honcho_create_conclusion`, and targeted prompt recall follow the mode.
 - Prompt on upgrade (`/honcho:setup`, `/honcho:status`, `/honcho:config`, and TUI launch) to keep directional or switch to unified, and suggest `/honcho:import` after switching so local history can be reingested.
