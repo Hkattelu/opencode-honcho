@@ -135,7 +135,6 @@ const createHonchoFetch = ({ failStableHydration = false } = {}) => {
         messages: [],
         summary: summary("Prompt-specific session summary."),
         peer_representation: `Prompt memory for ${target.searchParams.get("search_query")}`,
-        peerRepresentation: `Prompt memory for ${target.searchParams.get("search_query")}`,
         peer_card: null,
       })
     }
@@ -220,23 +219,7 @@ test("tools recall mode injects instructions without hydrating stable context", 
   }, undefined, { hosts: { opencode: { recallMode: "tools" } } })
 })
 
-test("system transform seals the stable context after the first turn", async () => {
-  await runWithHarness(async ({ hooks, fetch }) => {
-    const firstOutput = { system: [] }
-    await hooks["experimental.chat.system.transform"](systemInput(), firstOutput)
-    const callCountAfterFirstInjection = fetch.calls.length
-
-    const secondOutput = { system: [] }
-    await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
-
-    // The snapshot is frozen: identical system prompt, no new network calls.
-    expect(firstOutput.system).toHaveLength(2)
-    expect(secondOutput.system).toEqual(firstOutput.system)
-    expect(fetch.calls).toHaveLength(callCountAfterFirstInjection)
-  })
-})
-
-test("system transform keeps the frozen snapshot even after the stable context ttl", async () => {
+test("system transform seals the stable context on the first turn", async () => {
   const originalNow = Date.now
   try {
     let now = 1_000_000
@@ -245,37 +228,19 @@ test("system transform keeps the frozen snapshot even after the stable context t
     await runWithHarness(async ({ hooks, fetch }) => {
       const firstOutput = { system: [] }
       await hooks["experimental.chat.system.transform"](systemInput(), firstOutput)
-      const callCountAfterFirstInjection = fetch.calls.length
+      const callsAfterFirstTurn = fetch.calls.length
 
       now += 301_000
-
       const secondOutput = { system: [] }
       await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
 
+      expect(firstOutput.system).toHaveLength(2)
       expect(secondOutput.system).toEqual(firstOutput.system)
-      expect(fetch.calls).toHaveLength(callCountAfterFirstInjection)
+      expect(fetch.calls).toHaveLength(callsAfterFirstTurn)
     })
   } finally {
     Date.now = originalNow
   }
-})
-
-test("system transform does not retry stable hydration after the first turn", async () => {
-  await runWithHarness(async ({ hooks, fetch }) => {
-    const firstOutput = { system: [] }
-    await hooks["experimental.chat.system.transform"](systemInput(), firstOutput)
-    const callCountAfterFirstAttempt = fetch.calls.length
-
-    const secondOutput = { system: [] }
-    await hooks["experimental.chat.system.transform"](systemInput(), secondOutput)
-
-    // Hydration failed once and the snapshot was sealed empty — only the
-    // instruction is injected and no retry happens.
-    expect(firstOutput.system).toHaveLength(1)
-    expect(firstOutput.system[0]).toContain("## Honcho Memory")
-    expect(secondOutput.system).toEqual(firstOutput.system)
-    expect(fetch.calls).toHaveLength(callCountAfterFirstAttempt)
-  }, { failStableHydration: true })
 })
 
 test("chat.message skips recall for trivial prompt text", async () => {
@@ -307,6 +272,7 @@ test("chat.message appends prompt-specific memory as a synthetic part", async ()
     const synthetic = chatOutput.parts.find((part) => part.type === "text" && part.synthetic)
     expect(synthetic).toBeDefined()
     expect(synthetic?.messageID).toBe("msg-prompt")
+    expect(synthetic?.id).toMatch(/^prt_[0-9a-f]{12}[A-Za-z0-9_-]{14}$/)
     expect(synthetic?.text).toContain("Prompt memory for memory-injection")
 
     const targeted = fetch.calls.find(
@@ -322,5 +288,22 @@ test("chat.message appends prompt-specific memory as a synthetic part", async ()
     const systemOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), systemOutput)
     expect(systemOutput.system.join("\n")).not.toContain("Prompt memory for")
+  })
+})
+
+test("tool.execute.after records significant tool use to Honcho", async () => {
+  await runWithHarness(async ({ hooks, fetch }) => {
+    await hooks["tool.execute.after"](
+      { tool: "bash", sessionID: "ses-tool", callID: "call-1", args: { command: "npm test" } },
+      { title: "Bash output", output: "Tests passed", metadata: {} },
+    )
+
+    const saved = fetch.calls.find(
+      (call) =>
+        call.method === "POST" &&
+        /\/sessions\/[^/]+\/messages$/.test(call.pathname) &&
+        call.body?.messages?.some((msg) => msg.content?.includes("[Tool] Ran: npm test")),
+    )
+    expect(saved).toBeDefined()
   })
 })

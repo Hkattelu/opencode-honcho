@@ -6,7 +6,7 @@ license: MIT
 
 # Honcho memory
 
-You have a persistent memory of this user that survives across sessions, backed by Honcho. The opencode-honcho hooks already inject relevant context at the start of each turn, and they record the conversation automatically. This skill is for the times you should reach for memory *actively*.
+You have a persistent memory of this user that survives across sessions, backed by Honcho. In `hybrid` or `context` recall mode the opencode-honcho hooks inject relevant context each turn; in `tools` mode this skill is how memory reaches you. The hooks record the conversation in every mode. This skill is for the times you should reach for memory *actively*.
 
 ## When to pull memory
 

@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { randomUUID } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { tool, type Plugin, type PluginInput } from "@opencode-ai/plugin"
@@ -176,6 +176,15 @@ const DURABLE_PATTERNS = [
   /\b(i work on|i maintain|my project)\b/i,
   /\b(please don't|please do|remember that)\b/i,
 ]
+
+// OpenCode validates part ids against its "prt" prefix and orders parts by id,
+// so mirror its ascending id shape: 12 hex chars of timestamp + random suffix.
+function createPartId(): string {
+  const now = BigInt(Date.now()) * BigInt(0x1000)
+  const time = Buffer.alloc(6)
+  for (let i = 0; i < 6; i++) time[i] = Number((now >> BigInt(40 - 8 * i)) & BigInt(0xff))
+  return `prt_${time.toString("hex")}${randomBytes(14).toString("base64url").slice(0, 14)}`
+}
 
 const TRIVIAL_PROMPT_PATTERNS = [
   /^(ok|okay|k|thanks|thank you|continue|go on|next|yes|y|no|n|retry|again)$/i,
@@ -1476,7 +1485,7 @@ export const createHonchoRuntimePlugin =
             if (block && block !== state.lastInjectedContext) {
               state.lastInjectedContext = block
               output.parts.push({
-                id: randomUUID(),
+                id: createPartId(),
                 sessionID: input.sessionID,
                 messageID: output.message.id,
                 type: "text",

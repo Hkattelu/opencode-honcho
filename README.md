@@ -44,8 +44,8 @@ If your shell cannot find `opencode`, restart your shell or source your shell co
 ## What You Get
 
 - **Persistent Memory** - OpenCode can retain durable context across sessions
-- **Hook-Driven Memory** - OpenCode hooks inject user/project memory at the start of every turn and record significant tool activity, so memory works regardless of the underlying model
-- **Honcho Memory Skill** - A `honcho-memory` skill is installed under OpenCode's documented global config directory (`~/.config/opencode/skills/honcho-memory`, or `$OPENCODE_CONFIG_DIR/skills/honcho-memory`) so the agent knows when to pull and save memory actively
+- **Hook-Driven Memory** - Hooks inject memory into the prompt and record significant tool activity, so recall works regardless of the model
+- **Honcho Memory Skill** - A `honcho-memory` skill is installed into OpenCode's skills directory so the agent knows when to pull and save memory on its own
 - **Cloud or Local Deployments** - Use Honcho Cloud or point at a self-hosted or local Honcho instance
 - **Workspace Mapping** - OpenCode projects map to Honcho workspaces
 - **Session Mapping** - Sessions can be scoped per directory, repo, branch, chat instance, or globally
@@ -197,9 +197,10 @@ The plugin uses these OpenCode plugin capabilities:
 
 ### How hooks drive memory
 
-- `experimental.chat.system.transform` always appends Honcho memory instructions. With `recallMode: "hybrid"` or `"context"` it also injects a stable memory snapshot; prompt-specific memory is appended to the user turn by `chat.message`. With `recallMode: "tools"`, no memory content is injected automatically.
-- `tool.execute.after` records significant tool activity (shell commands, file edits, delegated tasks) into the session history so future recall reflects what was actually done. Read-only and trivial calls are skipped, and potentially credential-bearing shell arguments (API keys, passwords, cookies, authorization headers) are redacted before storage.
-- On session start (and after `honcho_setup` succeeds), the plugin copies the packaged `honcho-memory` skill into `~/.config/opencode/skills/honcho-memory`, or `$OPENCODE_CONFIG_DIR/skills/honcho-memory` when that override is set. An identical installed skill is left untouched.
+- `experimental.chat.system.transform` always appends the Honcho memory instruction. With `recallMode` `hybrid` or `context` it also adds a stable memory snapshot (user profile, agent context, session summary), captured once on the first turn of a session.
+- `chat.message` appends prompt-specific recall to each user turn in `hybrid` and `context` mode. In `tools` mode nothing beyond the instruction is injected; the model reaches memory only through the `honcho_*` tools.
+- `tool.execute.after` records shell commands, file edits, and delegated tasks to the session. Read-only and trivial calls are skipped. Shell arguments that may carry credentials are redacted, keeping only the executable name.
+- On session start and after `honcho_setup`, the packaged `honcho-memory` skill is copied to `~/.config/opencode/skills/honcho-memory`, or `$OPENCODE_CONFIG_DIR/skills/honcho-memory` when set. An unchanged file is left untouched.
 
 ## Development
 
